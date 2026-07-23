@@ -263,9 +263,9 @@ int main(void)
 				  // 1 * 1000 * 60 * 60
 				  // for testing, use minutes
 				  // hours
-				  // eventTime  = atoi(timeRecorded) * 1000 * 60 * 60;
+				  eventTime  = atoi(timeRecorded) * 1000 * 60 * 60;
 				  // minutes
-				  eventTime  = atoi(timeRecorded) * 1000 * 60;
+				  // eventTime  = atoi(timeRecorded) * 1000 * 60;
 				  eventStartTime = milliseconds;
 				  // reset time recorded
 				  for (int i = 0; i < timeDigitNum; i++) {
