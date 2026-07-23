@@ -25,6 +25,10 @@
 #include "keypad.h"
 #include "lcd.h"
 #include "motor.h"
+#include "pn532.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 
 /* USER CODE END Includes */
 
@@ -37,10 +41,16 @@
 /* USER CODE BEGIN PD */
 
 #define LCD_CLEAR_DISPLAY 0b00000001
+#define LCD_SHIFT_LEFT 0b00010000
 #define MAX_CHAR_IN_LINE 16
 #define LCD_FIRST_LINE 0x00
 #define LCD_SECOND_LINE 0x40
 #define SET_DDRAM_ADDRESS 0b10000000
+#define RFID_UID 0x765F3207
+#define NFC_UID 0x3E610B07
+#define KEYPAD_TIMEOUT 600000 // 600 seconds, 10 minutes
+// #define KEYPAD_TIMEOUT 6000 // 6 seconds for testing
+#define MAX_DIGITS 16
 
 /* USER CODE END PD */
 
@@ -52,6 +62,8 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc2;
 ADC_HandleTypeDef hadc3;
+
+I2C_HandleTypeDef hi2c1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim6;
@@ -71,7 +83,16 @@ enum STATES {
 // Sets the initial state of the gate
 int STATE = IDLE;
 // counts how many milliseconds since start of program
-int counter = 0;
+volatile int milliseconds = 0;
+
+// tracks time until keypad timeout
+int keypadStartTimeout = 0;
+// time that event state should last for
+int eventTime = 0;
+int eventStartTime = 0;
+// for keypad input tracking
+char timeRecorded[MAX_DIGITS] = {'\0'};
+int timeDigitNum = 0;
 
 /* USER CODE END PV */
 
@@ -83,6 +104,7 @@ static void MX_ADC2_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -126,12 +148,36 @@ int main(void)
   MX_ADC3_Init();
   MX_TIM1_Init();
   MX_TIM6_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  // test code to check NFC module
+//  for (uint8_t addr = 1; addr < 128; addr++) {
+//      if (HAL_I2C_IsDeviceReady(&hi2c1, addr << 1, 2, 10) == HAL_OK) {
+//          char msg[32];
+//          sprintf(msg, "Found device at 0x%02X\r\n", addr);
+//          UART_Print(msg);
+//      }
+//  }
 
   // start lcd
   LCD_init();
   // start timer 6
   HAL_TIM_Base_Start_IT(&htim6);
+
+  // start NFC configuration and check if it works
+  HAL_Delay(100);
+  PN532_SamConfig();
+
+  // test code
+//  HAL_Delay(100);
+//  if (PN532_SamConfig()) {
+//      UART_Print("PN532 SAM Config OK\r\n");
+//  } else {
+//      UART_Print("PN532 SAM Config FAILED\r\n");
+//  }
+  // to check if NFC reader works
+  uint8_t uid[7];
+  uint8_t uidLen;
 
   /* USER CODE END 2 */
 
@@ -139,9 +185,40 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+	  // commented code is just for testing, it can make keypad unreliable
+	  // for testing, check current state
+	  char stateMsg[32];
+	  sprintf(stateMsg, "STATE: %d\r\n", STATE);
+	  UART_Print(stateMsg);
+
+//	  // check if NFC reader works
+//	  uidLen = PN532_ReadPassiveTarget(uid);
+//	  if (uidLen > 0) {
+//		  UART_PrintUID(uid, uidLen);
+//	  }
+//	  HAL_Delay(1);
+//	  char m[100];
+//	  snprintf(m, sizeof(m), "Milliseconds since program start: %d\r\n", milliseconds);
+//	  UART_Print(m);
+
 	  if (STATE == IDLE) {
+		  // get uid
+		  uidLen = PN532_ReadPassiveTarget(uid);
+
+		  // check if success
+		  if (uidLen > 0) {
+			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+			  // from IDLE to KEYPAD_STATE
+			  if (RFID_UID == scannedUID && uidLen > 0) {
+				  STATE = KEYPAD;
+				  keypadStartTimeout = milliseconds;
+			  }
+		  }
 
 	  }
+
+
 
 	  if (STATE == OPEN) {
 
@@ -156,10 +233,62 @@ int main(void)
 	  }
 
 	  if (STATE == EVENT) {
-
+		  // check event time
+		  if ((milliseconds - eventStartTime) > eventTime) {
+			  STATE = IDLE;
+		  }
 	  }
 
 	  if (STATE == KEYPAD) {
+
+		  int c = 0;
+		  c = scan_keypad();
+		  if (c != 0) {
+			  if (c == '*') {
+				  // baclspace
+				  // backstpace on lcd
+				  LCD_SendCmd(LCD_SHIFT_LEFT);
+				  LCD_SendData(' ');
+				  LCD_SendCmd(LCD_SHIFT_LEFT);
+
+				  // reset last digit in array
+				  timeDigitNum--;
+				  timeRecorded[timeDigitNum] = '\0';
+
+			  } else if (c == '#') {
+				  // enter
+				  STATE = EVENT;
+				  // time recorded is in hours
+				  // e.g inputted 1 is 1 hour
+				  // 1 * 1000 * 60 * 60
+				  // for testing, use minutes
+				  // hours
+				  // eventTime  = atoi(timeRecorded) * 1000 * 60 * 60;
+				  // minutes
+				  eventTime  = atoi(timeRecorded) * 1000 * 60;
+				  eventStartTime = milliseconds;
+				  // reset time recorded
+				  for (int i = 0; i < timeDigitNum; i++) {
+					  timeRecorded[i] = '\0';
+				  }
+				  timeDigitNum = 0;
+				  // clear lcd after enter
+				  LCD_SendCmd(LCD_CLEAR_DISPLAY);
+			  } else if (c == 'A' || c == 'B' || c == 'C' || c == 'D') {
+				  // these buttons do nothing
+			  } else {
+				  // add number to end of array
+				  timeRecorded[timeDigitNum] = c;
+
+				  // print the letter
+				  LCD_SendData(c);
+			  }
+		  }
+		  int isTimeout = milliseconds - keypadStartTimeout;
+		  // goes back to IDLE state if timeout
+		  if (isTimeout > KEYPAD_TIMEOUT) {
+			  STATE = IDLE;
+		  }
 
 	  }
 
@@ -209,11 +338,13 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_TIM1
-                              |RCC_PERIPHCLK_ADC12|RCC_PERIPHCLK_ADC34;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_I2C1
+                              |RCC_PERIPHCLK_TIM1|RCC_PERIPHCLK_ADC12
+                              |RCC_PERIPHCLK_ADC34;
   PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
   PeriphClkInit.Adc12ClockSelection = RCC_ADC12PLLCLK_DIV1;
   PeriphClkInit.Adc34ClockSelection = RCC_ADC34PLLCLK_DIV1;
+  PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
   PeriphClkInit.Tim1ClockSelection = RCC_TIM1CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
@@ -341,6 +472,54 @@ static void MX_ADC3_Init(void)
   /* USER CODE BEGIN ADC3_Init 2 */
 
   /* USER CODE END ADC3_Init 2 */
+
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing = 0x00201D2B;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
 
@@ -610,6 +789,14 @@ static void MX_GPIO_Init(void)
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
+  /*Configure GPIO pins : PB6 PB9 (I2C1_SCL, I2C1_SDA) */
+  GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
@@ -620,9 +807,9 @@ void HAL_GPIO_EXITI_Callback(uint16_t GPIO_Pin) {
 	}
 }
 
-void HAL_TIME_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim == &htim6) {
-		counter++;
+		milliseconds++;
 	}
 }
 /* USER CODE END 4 */
