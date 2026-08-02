@@ -218,6 +218,8 @@ int main(void)
 			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
 			  // from IDLE to KEYPAD_STATE
 			  if (RFID_UID == scannedUID && uidLen > 0) {
+				  // reset eventStartTime
+				  eventStartTime = 0;
 				  STATE = KEYPAD;
 				  keypadSchedulePrint = 1;
 				  keypadStartTimeout = milliseconds;
@@ -225,8 +227,9 @@ int main(void)
 		  }
 
 		  // turns to event after scheduled time
-		  if (milliseconds >= eventStartTime) {
-			  STATE == EVENT;
+		  // if eventStartTime == 0 then its not initialised
+		  if (milliseconds >= eventStartTime && eventStartTime != 0) {
+			  STATE = EVENT;
 		  }
 
 	  }
@@ -317,7 +320,7 @@ int main(void)
 					  eventStartTime = milliseconds;
 				  } else {
 					  STATE = IDLE;
-					  eventStartTime = milliseconds + scheduledMinutes;
+					  eventStartTime = milliseconds + (scheduledMinutes * 1000 * 60);
 				  }
 			  } else if (c == 'A') {
 				  // move event start time forward/backward by one hour
