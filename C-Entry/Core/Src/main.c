@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include "keypadPassword.h"
 
 /* USER CODE END Includes */
 
@@ -113,6 +115,7 @@ static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 int scheduleChange (int scheduledMinutes, int forward, int value);
+bool checkPassword ();
 
 /* USER CODE END PFP */
 
@@ -218,11 +221,13 @@ int main(void)
 			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
 			  // from IDLE to KEYPAD_STATE
 			  if (RFID_UID == scannedUID && uidLen > 0) {
-				  // reset eventStartTime
-				  eventStartTime = 0;
-				  STATE = KEYPAD;
-				  keypadSchedulePrint = 1;
-				  keypadStartTimeout = milliseconds;
+				  if (checkPassword()) {
+					  // reset eventStartTime
+					  eventStartTime = 0;
+					  STATE = KEYPAD;
+					  keypadSchedulePrint = 1;
+					  keypadStartTimeout = milliseconds;
+				  }
 			  }
 		  }
 
@@ -890,6 +895,48 @@ int scheduleChange (int scheduledMinutes, int forward, int value) {
 	  return scheduledMinutes;
 }
 
+bool checkPassword() {
+	// setting own password
+	char password[] = "admin";
+	char inputtedPassword[20];
+	int inputtedPasswordCount = 0;
+	int doneTyping = 0;
+
+	// timeout is 10 mins
+	int timeout = 1000 * 60;
+	int timerStart = milliseconds;
+	while (((milliseconds - timerStart) < timeout) && (doneTyping == 0)) {
+		int c = 0;
+		c = scanKeypadPassword();
+		if (c != 0) {
+			// backspace
+			if (c == '*') {
+				//backspace on LCD
+				LCD_SendCmd(LCD_SHIFT_LEFT);
+				HAL_Delay(1);
+				LCD_SendData(' ');
+				HAL_Delay(1);
+				LCD_SendCmd(LCD_SHIFT_LEFT);
+				inputtedPassword[inputtedPasswordCount] = '\0';
+				inputtedPasswordCount--;
+			} else if (c == '#') {
+				inputtedPassword[inputtedPasswordCount] = '\0';
+				doneTyping = 1;
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+			} else {
+				LCD_SendData(c);
+				inputtedPassword[inputtedPasswordCount++] = c;
+			}
+		}
+	}
+
+	// clear it if timer ends
+	LCD_SendCmd(LCD_CLEAR_DISPLAY);
+	if (strcmp(password, inputtedPassword) == 0) {
+		return true;
+	}
+	return false;
+}
 /* USER CODE END 4 */
 
 /**
