@@ -71,6 +71,21 @@ void LCD_SendStr(char *str) {
 
 }
 
+void LCD_SetCursor(uint8_t row, uint8_t col)
+{
+    uint8_t address;
+
+    // Calculate DDRAM address based on row and column
+        if (row == 0) {
+            address = 0x80 + col; // Row 0 starts at DDRAM address 0x00 (0x80 command mask)
+        } else {
+            address = 0xC0 + col; // Row 1 starts at DDRAM address 0x40 (0x80 command mask + 0x40)
+        }
+
+        // Send the address command to the LCD
+        LCD_SendCmd(address);
+}
+
 void LCD_init() {
 	 // 1. wait for enough time to stabilise
 	 HAL_Delay(50);
