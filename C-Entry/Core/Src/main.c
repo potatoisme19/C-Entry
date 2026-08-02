@@ -93,6 +93,11 @@ int eventStartTime = 0;
 // for keypad input tracking
 char timeRecorded[MAX_DIGITS] = {'\0'};
 int timeDigitNum = 0;
+// for scheduling
+int scheduledMinutes = 0;
+int keypadSchedulePrint = 0;
+int forward = 1;
+int currentLCDBit = 0;
 
 /* USER CODE END PV */
 
@@ -106,6 +111,8 @@ static void MX_TIM1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
+
+int scheduleChange (int scheduledMinutes, int forward, int value);
 
 /* USER CODE END PFP */
 
@@ -192,7 +199,7 @@ int main(void)
 	  sprintf(stateMsg, "STATE: %d\r\n", STATE);
 	  UART_Print(stateMsg);
 
-//	  // check if NFC reader works
+	  // check if NFC reader works
 //	  uidLen = PN532_ReadPassiveTarget(uid);
 //	  if (uidLen > 0) {
 //		  UART_PrintUID(uid, uidLen);
@@ -212,8 +219,14 @@ int main(void)
 			  // from IDLE to KEYPAD_STATE
 			  if (RFID_UID == scannedUID && uidLen > 0) {
 				  STATE = KEYPAD;
+				  keypadSchedulePrint = 1;
 				  keypadStartTimeout = milliseconds;
 			  }
+		  }
+
+		  // turns to event after scheduled time
+		  if (milliseconds >= eventStartTime) {
+			  STATE == EVENT;
 		  }
 
 	  }
@@ -233,13 +246,41 @@ int main(void)
 	  }
 
 	  if (STATE == EVENT) {
-		  // check event time
+		  // timer on how long the event is going to go on for in first line
+		  // timer when event is starting on second line (if its now set 'now')
+
+		  // check event time, goes to IDLE state if event time is more than assigned time
 		  if ((milliseconds - eventStartTime) > eventTime) {
 			  STATE = IDLE;
 		  }
 	  }
 
 	  if (STATE == KEYPAD) {
+		  if (keypadSchedulePrint == 1) {
+			  LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+			  // clear only second line
+			  LCD_SendStr("                ");
+			  // time scheduled
+			  char scheduledTime[] = "S: ";
+			  LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+			  LCD_SendStr(scheduledTime);
+			  char hrs[20];
+			  snprintf(hrs, sizeof(hrs), "%d", scheduledMinutes / 60);
+			  LCD_SendStr(hrs);
+			  LCD_SendStr("hrs ");
+			  char mins[20];
+			  snprintf(mins, sizeof(mins), "%d", scheduledMinutes % 60);
+			  LCD_SendStr(mins);
+			  LCD_SendStr("min");
+
+			  keypadSchedulePrint = 0;
+			  // t for time period
+			  LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+			  LCD_SendStr("T: ");
+			  // 3 since T:
+			  currentLCDBit = 3 + timeDigitNum;
+			  LCD_SendCmd(SET_DDRAM_ADDRESS | currentLCDBit);
+		  }
 
 		  int c = 0;
 		  c = scan_keypad();
@@ -257,16 +298,12 @@ int main(void)
 
 			  } else if (c == '#') {
 				  // enter
-				  STATE = EVENT;
-				  // time recorded is in hours
-				  // e.g inputted 1 is 1 hour
-				  // 1 * 1000 * 60 * 60
-				  // for testing, use minutes
-				  // hours
-				  eventTime  = atoi(timeRecorded) * 1000 * 60 * 60;
+				  // time recorded is in minutes
+				  // e.g inputted 1 is 1 minute
 				  // minutes
 				  // eventTime  = atoi(timeRecorded) * 1000 * 60;
-				  eventStartTime = milliseconds;
+				  // seconds for testing
+				  eventTime = atoi(timeRecorded) * 1000;
 				  // reset time recorded
 				  for (int i = 0; i < timeDigitNum; i++) {
 					  timeRecorded[i] = '\0';
@@ -274,11 +311,33 @@ int main(void)
 				  timeDigitNum = 0;
 				  // clear lcd after enter
 				  LCD_SendCmd(LCD_CLEAR_DISPLAY);
-			  } else if (c == 'A' || c == 'B' || c == 'C' || c == 'D') {
-				  // these buttons do nothing
+				  if (scheduledMinutes == 0) {
+					  // if theres no scheduled time we start instantly
+					  STATE = EVENT;
+					  eventStartTime = milliseconds;
+				  } else {
+					  STATE = IDLE;
+					  eventStartTime = milliseconds + scheduledMinutes;
+				  }
+			  } else if (c == 'A') {
+				  // move event start time forward/backward by one hour
+				  scheduledMinutes = scheduleChange(scheduledMinutes, forward, 60);
+				  keypadSchedulePrint = 1;
+			  } else if (c == 'B') {
+				  // move event start time forward/backward by 10 minutes
+				  scheduledMinutes = scheduleChange(scheduledMinutes, forward, 10);
+				  keypadSchedulePrint = 1;
+			  } else if (c == 'C') {
+				  // move event start time forward/backward by 1 minute
+				  scheduledMinutes = scheduleChange(scheduledMinutes, forward, 1);
+				  keypadSchedulePrint = 1;
+			  } else if (c == 'D') {
+				  // change to forward/backward
+				  forward = !forward;
 			  } else {
 				  // add number to end of array
 				  timeRecorded[timeDigitNum] = c;
+				  timeDigitNum++;
 
 				  // print the letter
 				  LCD_SendData(c);
@@ -812,6 +871,22 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		milliseconds++;
 	}
 }
+
+// for scheduling
+int scheduleChange (int scheduledMinutes, int forward, int value) {
+	  if (forward == 1) {
+		  scheduledMinutes = scheduledMinutes + value;
+	  } else {
+		  if (scheduledMinutes >= 0) {
+			  int temp = scheduledMinutes - value;
+			  if (temp >= 0) {
+				  scheduledMinutes = scheduledMinutes - value;
+			  }
+		  }
+	  }
+	  return scheduledMinutes;
+}
+
 /* USER CODE END 4 */
 
 /**
