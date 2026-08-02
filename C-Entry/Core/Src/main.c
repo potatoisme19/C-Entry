@@ -304,9 +304,9 @@ int main(void)
 				  // time recorded is in minutes
 				  // e.g inputted 1 is 1 minute
 				  // minutes
-				  // eventTime  = atoi(timeRecorded) * 1000 * 60;
+				  eventTime  = atoi(timeRecorded) * 1000 * 60;
 				  // seconds for testing
-				  eventTime = atoi(timeRecorded) * 1000;
+				  // eventTime = atoi(timeRecorded) * 1000;
 				  // reset time recorded
 				  for (int i = 0; i < timeDigitNum; i++) {
 					  timeRecorded[i] = '\0';
