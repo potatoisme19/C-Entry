@@ -309,7 +309,7 @@ int main(void) {
 			// timer on how long the event is going to go on for in first line
 			// timer when event is starting on second line (if its now set 'now')
 			int elapsedEventTime = milliseconds - eventStartTime;
-			int remainingEventSec = (eventTIme - elapsedEventTime) / 1000;
+			int remainingEventSec = (eventTime - elapsedEventTime) / 1000;
 
 			if (remainingEventSec < 0) {
 				remainingEventSec = 0;
@@ -331,7 +331,7 @@ int main(void) {
 			LCD_SendCmd(LCD_CLEAR_DISPLAY);
 			HAL_Delay(2);
 
-			LCD_LCD_SetCursor(0, 0); // Line 1
+			LCD_SetCursor(0, 0); // Line 1
 		    LCD_SendStr(line1Str);
 
 		    LCD_SetCursor(1, 0); // Line 2
