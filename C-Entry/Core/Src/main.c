@@ -195,7 +195,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
 	  // commented code is just for testing, it can make keypad unreliable
 	  // for testing, check current state
 	  char stateMsg[32];
@@ -246,20 +245,73 @@ int main(void)
 	  }
 
 	  if (STATE == ALARM) {
+		  // get uid
+		  uidLen = PN532_ReadPassiveTarget(uid);
+
+		  // check if success
+		  if (uidLen > 0) {
+			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+			  // from ALARM to IDLE
+			  if (RFID_UID == scannedUID && uidLen > 0) {
+				  if (checkPassword()) {
+					  STATE = IDLE;
+				  }
+			  }
+		  }
 
 	  }
 
 	  if (STATE == EMERGENCY) {
+		  // get uid
+		  uidLen = PN532_ReadPassiveTarget(uid);
 
+		  // check if success
+		  if (uidLen > 0) {
+			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+			  // from EMERGENCY to IDLE
+			  if (RFID_UID == scannedUID && uidLen > 0) {
+				  if (checkPassword()) {
+					  STATE = IDLE;
+				  }
+			  }
+		  }
 	  }
 
 	  if (STATE == EVENT) {
 		  // timer on how long the event is going to go on for in first line
 		  // timer when event is starting on second line (if its now set 'now')
+		  if (HAL_GPIO_ReadPin(SW4_GPIO_Port, SW4_Pin) == 1) {
+			  // if we want to end EVENT state early, press SW4 button
+			  // we do this since getting uid will make LCD print slower
+			  int timeout = 1000 * 60; // 1 minute timeout
+			  // scans for RFID
+			  int timer = milliseconds;
+			  while (milliseconds - timer < timeout) {
+				  // get uid
+				  uidLen = PN532_ReadPassiveTarget(uid);
 
+				  // check success
+				  if (uidLen > 0) {
+					  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+					  if (RFID_UID == scannedUID && uidLen > 0) {
+						  if (checkPassword()) {
+							  STATE = IDLE;
+							  eventTime = 0;
+							  eventStartTime = 0;
+							  // only break while loop if password correct
+							  // otherwise keep looping until timeout
+							  break;
+						  }
+					  }
+				  }
+			  }
+
+		  }
 		  // check event time, goes to IDLE state if event time is more than assigned time
 		  if ((milliseconds - eventStartTime) > eventTime) {
 			  STATE = IDLE;
+			  eventTime = 0;
+			  eventStartTime = 0;
 		  }
 	  }
 
@@ -294,8 +346,7 @@ int main(void)
 		  c = scan_keypad();
 		  if (c != 0) {
 			  if (c == '*') {
-				  // baclspace
-				  // backstpace on lcd
+				  // backspace
 				  LCD_SendCmd(LCD_SHIFT_LEFT);
 				  LCD_SendData(' ');
 				  LCD_SendCmd(LCD_SHIFT_LEFT);
@@ -868,7 +919,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_GPIO_EXITI_Callback(uint16_t GPIO_Pin) {
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	if (GPIO_Pin == SW1_Pin) {
 		STATE = EMERGENCY;
 	}
