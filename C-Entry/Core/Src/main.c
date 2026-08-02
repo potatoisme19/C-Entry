@@ -101,6 +101,9 @@ int keypadSchedulePrint = 0;
 int forward = 1;
 int currentLCDBit = 0;
 
+// to clear LCD when emergency is called
+int emergencyStateChange = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -219,7 +222,7 @@ int main(void)
 		  if (uidLen > 0) {
 			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
 			  // from IDLE to KEYPAD_STATE
-			  if (RFID_UID == scannedUID && uidLen > 0) {
+			  if (RFID_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
 				  if (checkPassword()) {
 					  // reset eventStartTime
 					  eventStartTime = 0;
@@ -232,7 +235,7 @@ int main(void)
 
 		  // turns to event after scheduled time
 		  // if eventStartTime == 0 then its not initialised
-		  if (milliseconds >= eventStartTime && eventStartTime != 0) {
+		  if (milliseconds >= eventStartTime && eventStartTime != 0 && STATE != EMERGENCY) {
 			  STATE = EVENT;
 		  }
 
@@ -262,6 +265,15 @@ int main(void)
 	  }
 
 	  if (STATE == EMERGENCY) {
+		  if (emergencyStateChange) {
+			  LCD_SendCmd(LCD_CLEAR_DISPLAY);
+			  emergencyStateChange = 0;
+			  // if it changed to emergency in the middle of keypad input
+			  for (int i = 0; i < timeDigitNum; i++) {
+				  timeRecorded[i] = '\0';
+			  }
+			  timeDigitNum = 0;
+		  }
 		  // get uid
 		  uidLen = PN532_ReadPassiveTarget(uid);
 
@@ -286,7 +298,7 @@ int main(void)
 			  int timeout = 1000 * 60; // 1 minute timeout
 			  // scans for RFID
 			  int timer = milliseconds;
-			  while (milliseconds - timer < timeout) {
+			  while (milliseconds - timer < timeout && STATE != EMERGENCY) {
 				  // get uid
 				  uidLen = PN532_ReadPassiveTarget(uid);
 
@@ -308,7 +320,7 @@ int main(void)
 
 		  }
 		  // check event time, goes to IDLE state if event time is more than assigned time
-		  if ((milliseconds - eventStartTime) > eventTime) {
+		  if ((milliseconds - eventStartTime) > eventTime && STATE != EMERGENCY) {
 			  STATE = IDLE;
 			  eventTime = 0;
 			  eventStartTime = 0;
@@ -347,13 +359,15 @@ int main(void)
 		  if (c != 0) {
 			  if (c == '*') {
 				  // backspace
-				  LCD_SendCmd(LCD_SHIFT_LEFT);
-				  LCD_SendData(' ');
-				  LCD_SendCmd(LCD_SHIFT_LEFT);
+				  if (timeDigitNum > 0) {
+					  LCD_SendCmd(LCD_SHIFT_LEFT);
+					  LCD_SendData(' ');
+					  LCD_SendCmd(LCD_SHIFT_LEFT);
 
-				  // reset last digit in array
-				  timeDigitNum--;
-				  timeRecorded[timeDigitNum] = '\0';
+					  // reset last digit in array
+					  timeDigitNum--;
+					  timeRecorded[timeDigitNum] = '\0';
+				  }
 
 			  } else if (c == '#') {
 				  // enter
@@ -921,6 +935,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	if (GPIO_Pin == SW1_Pin) {
+		emergencyStateChange = 1;
 		STATE = EMERGENCY;
 	}
 }
