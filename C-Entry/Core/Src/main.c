@@ -420,6 +420,7 @@ int main(void)
 			if (eventFirstStart == 1) {
 				// open all doors
 				// rotate by 90 degrees (512 full steps)
+				// goes clockwise
 				stepper_rotate_steps(512, 5);
 				eventFirstStart = 0;
 			}
@@ -450,7 +451,8 @@ int main(void)
 								eventStartTime = 0;
 								// close gates
 								for (int i = 0; i < 128; i++) {
-									FullStepReverse(5);
+									// goes anticlockwise
+									FullStep(5);
 								}
 								// only break while loop if password correct
 								// otherwise keep looping until timeout

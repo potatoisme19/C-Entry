@@ -8,9 +8,12 @@
 #ifndef INC_MOTOR_H_
 #define INC_MOTOR_H_
 
+// goes anticlockwise
 void WaveStep(int speed);
 void FullStep(int speed);
 void HalfStep(int speed);
+
+// goes clockwise
 void stepper_rotate_steps(uint16_t steps, uint8_t delay_ms);
 void FullStepReverse(int speed);
 
