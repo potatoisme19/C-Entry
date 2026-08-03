@@ -11,5 +11,6 @@
 void WaveStep(int speed);
 void FullStep(int speed);
 void HalfStep(int speed);
+void stepper_rotate_steps(uint16_t steps, uint8_t delay_ms);
 
 #endif /* INC_MOTOR_H_ */
