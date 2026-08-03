@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include "keypadPassword.h"
 
 /* USER CODE END Includes */
 
@@ -94,6 +96,9 @@ int keypadSchedulePrint = 0;
 int forward = 1;
 int currentLCDBit = 0;
 
+// to clear LCD when emergency is called
+int emergencyStateChange = 0;
+
 // for event
 int eventFirstStart = 0;
 int lastPrinted = 0;
@@ -111,6 +116,7 @@ static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 int scheduleChange(int scheduledMinutes, int forward, int value);
+bool checkPassword ();
 void shift_register_write(uint16_t data);
 
 /* USER CODE END PFP */
@@ -196,38 +202,39 @@ int main(void) {
 		UART_Print(stateMsg);
 
 		// check if NFC reader works
-//	  uidLen = PN532_ReadPassiveTarget(uid);
-//	  if (uidLen > 0) {
-//		  UART_PrintUID(uid, uidLen);
-//	  }
-//	  HAL_Delay(1);
-//	  char m[100];
-//	  snprintf(m, sizeof(m), "Milliseconds since program start: %d\r\n", milliseconds);
-//	  UART_Print(m);
+		//	  uidLen = PN532_ReadPassiveTarget(uid);
+		//	  if (uidLen > 0) {
+		//		  UART_PrintUID(uid, uidLen);
+		//	  }
+		//	  HAL_Delay(1);
+		//	  char m[100];
+		//	  snprintf(m, sizeof(m), "Milliseconds since program start: %d\r\n", milliseconds);
+		//	  UART_Print(m);
 
 		if (STATE == IDLE) {
 			// get uid
 			uidLen = PN532_ReadPassiveTarget(uid);
 
-			// check if success
-			if (uidLen > 0) {
-				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
-						| (uid[2] << 8) | uid[3];
-				// from IDLE to KEYPAD_STATE
-				if (RFID_UID == scannedUID && uidLen > 0) {
-					// reset eventStartTime
-					eventStartTime = 0;
-					STATE = KEYPAD;
-					keypadSchedulePrint = 1;
-					keypadStartTimeout = milliseconds;
-				}
-			}
+		  // check if success
+		  if (uidLen > 0) {
+			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+			  // from IDLE to KEYPAD_STATE
+			  if (RFID_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
+				  if (checkPassword()) {
+					  // reset eventStartTime
+					  eventStartTime = 0;
+					  STATE = KEYPAD;
+					  keypadSchedulePrint = 1;
+					  keypadStartTimeout = milliseconds;
+				  }
+			  }
+		  }
 
-			// turns to event after scheduled time
-			// if eventStartTime == 0 then its not initialised
-			if (milliseconds >= eventStartTime && eventStartTime != 0) {
-				STATE = EVENT;
-			}
+		  // turns to event after scheduled time
+		  // if eventStartTime == 0 then its not initialised
+		  if (milliseconds >= eventStartTime && eventStartTime != 0 && STATE != EMERGENCY) {
+			  STATE = EVENT;
+		  }
 
 		}
 
@@ -236,11 +243,45 @@ int main(void) {
 		}
 
 		if (STATE == ALARM) {
+			// get uid
+			uidLen = PN532_ReadPassiveTarget(uid);
+
+			// check if success
+			if (uidLen > 0) {
+				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+				// from ALARM to IDLE
+				if (RFID_UID == scannedUID && uidLen > 0) {
+					if (checkPassword()) {
+						STATE = IDLE;
+					}
+				}
+			}
 
 		}
 
 		if (STATE == EMERGENCY) {
+			if (emergencyStateChange) {
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				emergencyStateChange = 0;
+				// if it changed to emergency in the middle of keypad input
+				for (int i = 0; i < timeDigitNum; i++) {
+					timeRecorded[i] = '\0';
+				}
+				timeDigitNum = 0;
+			}
+			// get uid
+			uidLen = PN532_ReadPassiveTarget(uid);
 
+			// check if success
+			if (uidLen > 0) {
+				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+				// from EMERGENCY to IDLE
+				if (RFID_UID == scannedUID && uidLen > 0) {
+					if (checkPassword()) {
+						STATE = IDLE;
+					}
+				}
+			}
 		}
 
 		if (STATE == EVENT) {
@@ -281,8 +322,7 @@ int main(void) {
 				LCD_SendStr(line2Str);
 				lastPrinted = milliseconds;
 			}
-
-
+				
 			shift_register_write(0xAAAA);
 			HAL_Delay(1);
 
@@ -293,12 +333,45 @@ int main(void) {
 				eventFirstStart = 0;
 			}
 
+			if (HAL_GPIO_ReadPin(SW4_GPIO_Port, SW4_Pin) == 1) {
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+				char exitStr[17];
+				snprintf(exitStr, sizeof(exitStr), "EXITING");
+				LCD_SendStr(exitStr);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				// if we want to end EVENT state early, press SW4 button
+				// we do this since getting uid will make LCD print slower
+				int timeout = 1000 * 60; // 1 minute timeout
+				// scans for RFID
+				int timer = milliseconds;
+				while (milliseconds - timer < timeout && STATE != EMERGENCY) {
+					// get uid
+					uidLen = PN532_ReadPassiveTarget(uid);
 
-			// check event time, goes to IDLE state if event time is more than assigned time
-			if ((milliseconds - eventStartTime) > eventTime) {
-				// turn 90 anticlockwise
-				STATE = IDLE;
+					// check success
+					if (uidLen > 0) {
+						uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+						if (RFID_UID == scannedUID && uidLen > 0) {
+							if (checkPassword()) {
+								STATE = IDLE;
+								eventTime = 0;
+								eventStartTime = 0;
+								// only break while loop if password correct
+								// otherwise keep looping until timeout
+								break;
+							}
+						}
+					}
+				}
 			}
+			// check event time, goes to IDLE state if event time is more than assigned time
+			if ((milliseconds - eventStartTime) > eventTime && STATE != EMERGENCY) {
+				STATE = IDLE;
+				eventTime = 0;
+				eventStartTime = 0;
+			}
+			
 		}
 
 		if (STATE == KEYPAD) {
@@ -332,15 +405,16 @@ int main(void) {
 			c = scan_keypad();
 			if (c != 0) {
 				if (c == '*') {
-					// baclspace
-					// backstpace on lcd
-					LCD_SendCmd(LCD_SHIFT_LEFT);
-					LCD_SendData(' ');
-					LCD_SendCmd(LCD_SHIFT_LEFT);
+					// backspace
+					if (timeDigitNum > 0) {
+						LCD_SendCmd(LCD_SHIFT_LEFT);
+						LCD_SendData(' ');
+						LCD_SendCmd(LCD_SHIFT_LEFT);
 
-					// reset last digit in array
-					timeDigitNum--;
-					timeRecorded[timeDigitNum] = '\0';
+						// reset last digit in array
+						timeDigitNum--;
+						timeRecorded[timeDigitNum] = '\0';
+					}
 
 				} else if (c == '#') {
 					// enter
@@ -348,7 +422,7 @@ int main(void) {
 					// time recorded is in minutes
 					// e.g inputted 1 is 1 minute
 					// minutes
-					eventTime = atoi(timeRecorded) * 1000 * 60;
+					eventTime  = atoi(timeRecorded) * 1000 * 60;
 					// seconds for testing
 					// eventTime = atoi(timeRecorded) * 1000;
 					// reset time recorded
@@ -364,23 +438,19 @@ int main(void) {
 						eventStartTime = milliseconds;
 					} else {
 						STATE = IDLE;
-						eventStartTime = milliseconds
-								+ (scheduledMinutes * 1000 * 60);
+						eventStartTime = milliseconds + (scheduledMinutes * 1000 * 60);
 					}
 				} else if (c == 'A') {
 					// move event start time forward/backward by one hour
-					scheduledMinutes = scheduleChange(scheduledMinutes, forward,
-							60);
+					scheduledMinutes = scheduleChange(scheduledMinutes, forward, 60);
 					keypadSchedulePrint = 1;
 				} else if (c == 'B') {
 					// move event start time forward/backward by 10 minutes
-					scheduledMinutes = scheduleChange(scheduledMinutes, forward,
-							10);
+					scheduledMinutes = scheduleChange(scheduledMinutes, forward, 10);
 					keypadSchedulePrint = 1;
 				} else if (c == 'C') {
 					// move event start time forward/backward by 1 minute
-					scheduledMinutes = scheduleChange(scheduledMinutes, forward,
-							1);
+					scheduledMinutes = scheduleChange(scheduledMinutes, forward, 1);
 					keypadSchedulePrint = 1;
 				} else if (c == 'D') {
 					// change to forward/backward
@@ -401,12 +471,12 @@ int main(void) {
 			}
 
 		}
-
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
 	}
 	/* USER CODE END 3 */
+
 }
 
 /**
@@ -890,8 +960,9 @@ static void MX_GPIO_Init(void) {
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_GPIO_EXITI_Callback(uint16_t GPIO_Pin) {
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	if (GPIO_Pin == SW1_Pin) {
+		emergencyStateChange = 1;
 		STATE = EMERGENCY;
 	}
 }
@@ -942,6 +1013,48 @@ void shift_register_write(uint16_t data) {
 	HAL_GPIO_WritePin(RCLK_GPIO_Port, RCLK_Pin, 0);
 }
 
+bool checkPassword() {
+	// setting own password
+	char password[] = "admin";
+	char inputtedPassword[20];
+	int inputtedPasswordCount = 0;
+	int doneTyping = 0;
+
+	// timeout is 10 mins
+	int timeout = 1000 * 60;
+	int timerStart = milliseconds;
+	while (((milliseconds - timerStart) < timeout) && (doneTyping == 0)) {
+		int c = 0;
+		c = scanKeypadPassword();
+		if (c != 0) {
+			// backspace
+			if (c == '*') {
+				//backspace on LCD
+				LCD_SendCmd(LCD_SHIFT_LEFT);
+				HAL_Delay(1);
+				LCD_SendData(' ');
+				HAL_Delay(1);
+				LCD_SendCmd(LCD_SHIFT_LEFT);
+				inputtedPassword[inputtedPasswordCount] = '\0';
+				inputtedPasswordCount--;
+			} else if (c == '#') {
+				inputtedPassword[inputtedPasswordCount] = '\0';
+				doneTyping = 1;
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+			} else {
+				LCD_SendData(c);
+				inputtedPassword[inputtedPasswordCount++] = c;
+			}
+		}
+	}
+
+	// clear it if timer ends
+	LCD_SendCmd(LCD_CLEAR_DISPLAY);
+	if (strcmp(password, inputtedPassword) == 0) {
+		return true;
+	}
+	return false;
+}
 /* USER CODE END 4 */
 
 /**

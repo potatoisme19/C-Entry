@@ -7,6 +7,7 @@
 
 #ifndef SRC_KEYPAD_H_
 #define SRC_KEYPAD_H_
+#include <stdint.h>
 
 uint8_t scan_keypad();
 
