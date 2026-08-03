@@ -94,6 +94,9 @@ int keypadSchedulePrint = 0;
 int forward = 1;
 int currentLCDBit = 0;
 
+// for event
+int eventFirstStart = 0;
+int lastPrinted = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -108,6 +111,7 @@ static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 int scheduleChange(int scheduledMinutes, int forward, int value);
+void shift_register_write(uint16_t data);
 
 /* USER CODE END PFP */
 
@@ -178,72 +182,6 @@ int main(void) {
 	// to check if NFC reader works
 	uint8_t uid[7];
 	uint8_t uidLen;
-
-	/**
-	 * @brief Sends a 16-bit pattern to the shifted LED registers.
-	 * @param data: 16-bit integer where each bit represents an LED (1 = ON, 0 = OFF)
-	 */
-	void shift_register_write(uint16_t data) {
-		// Repeat for all 16 bits (MSB first)
-		for (int i = 15; i >= 0; i--) {
-			// Step 2: Read bit i and set SER pin
-			if ((data >> i) & 1) {
-				HAL_GPIO_WritePin(SER_GPIO_Port, SER_Pin, 1);   // SER HIGH
-			} else {
-				HAL_GPIO_WritePin(SER_GPIO_Port, SER_Pin, 0); // SER LOW
-			}
-
-			// Step 3: Pulse SRCLK (Serial Clock) HIGH then LOW
-			HAL_GPIO_WritePin(SRCLK_GPIO_Port, SRCLK_Pin, 1);
-			HAL_GPIO_WritePin(SRCLK_GPIO_Port, SRCLK_Pin, 0);
-		}
-
-		// Step 5: Pulse RCLK (Latch Clock) HIGH then LOW to output all bits
-		HAL_GPIO_WritePin(RCLK_GPIO_Port, RCLK_Pin, 1);
-		HAL_GPIO_WritePin(RCLK_GPIO_Port, RCLK_Pin, 0);
-	}
-
-	/**
-	 * @brief Rotates the stepper motor by a set number of full steps.
-	 * @param steps: Number of steps
-	 * @param delay_ms: Speed control delay between steps
-	 */
-	void stepper_rotate_steps(uint16_t steps, uint8_t delay_ms) {
-		for (int i = 0; i < steps; i++) {
-
-			int step = i % 4;
-
-			if (step == 0) {
-				//step 1
-				HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 1);
-				HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 0);
-				HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 0);
-				HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 1);
-				HAL_Delay(delay_ms);
-			} else if (step == 1) {
-				//step 2
-				HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 1);
-				HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 1);
-				HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 0);
-				HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 0);
-				HAL_Delay(delay_ms);
-			} else if (step == 2) {
-				//step 3
-				HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 0);
-				HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 1);
-				HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 1);
-				HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 0);
-				HAL_Delay(delay_ms);
-			} else if (step == 3) {
-				//step 4
-				HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 0);
-				HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 0);
-				HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 1);
-				HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 1);
-				HAL_Delay(delay_ms);
-			}
-		}
-	}
 
 	/* USER CODE END 2 */
 
@@ -319,30 +257,42 @@ int main(void) {
 			int eventSecs = remainingEventSec % 60;
 
 			// how long the event is going to go on
-			char line1Str[17];
-			snprintf(line1Str, sizeof(line1Str), "Dur: %02dm %02ds", eventMins,
+			char line2Str[17];
+			snprintf(line2Str, sizeof(line2Str), "Dur: %02dm %02ds", eventMins,
 					eventSecs);
 
-			// event start status
-			char line2Str[17];
-			snprintf(line2Str, sizeof(line2Str), "Start: NOW");
+			if (eventFirstStart == 1) {
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				char line1Str[17];
+				snprintf(line1Str, sizeof(line1Str), "EVENT");
+				LCD_SendStr(line1Str);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+				char rotatingStr[17];
+				snprintf(rotatingStr, sizeof(rotatingStr), "ROTATING");
+				LCD_SendStr(rotatingStr);
+			}
 
-			//update the LCD
-			LCD_SendCmd(LCD_CLEAR_DISPLAY);
-			HAL_Delay(2);
+			if (milliseconds - lastPrinted >= 1000 && eventFirstStart == 0) {
+				//update the LCD
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+				LCD_SendStr("                ");
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+				LCD_SendStr(line2Str);
+				lastPrinted = milliseconds;
+			}
 
-			LCD_SetCursor(0, 0); // Line 1
-		    LCD_SendStr(line1Str);
-
-		    LCD_SetCursor(1, 0); // Line 2
-		    LCD_SendStr(line2Str);
 
 			shift_register_write(0xAAAA);
-			HAL_Delay(300);
+			HAL_Delay(1);
 
-			// open all doors
-			// rotate by 90 degrees (512 full steps)
-			stepper_rotate_steps(512, 5);
+			if (eventFirstStart == 1) {
+				// open all doors
+				// rotate by 90 degrees (512 full steps)
+				stepper_rotate_steps(512, 5);
+				eventFirstStart = 0;
+			}
+
 
 			// check event time, goes to IDLE state if event time is more than assigned time
 			if ((milliseconds - eventStartTime) > eventTime) {
@@ -394,6 +344,7 @@ int main(void) {
 
 				} else if (c == '#') {
 					// enter
+					eventFirstStart = 1;
 					// time recorded is in minutes
 					// e.g inputted 1 is 1 minute
 					// minutes
@@ -964,6 +915,31 @@ int scheduleChange(int scheduledMinutes, int forward, int value) {
 		}
 	}
 	return scheduledMinutes;
+}
+
+
+/**
+ * @brief Sends a 16-bit pattern to the shifted LED registers.
+ * @param data: 16-bit integer where each bit represents an LED (1 = ON, 0 = OFF)
+ */
+void shift_register_write(uint16_t data) {
+	// Repeat for all 16 bits (MSB first)
+	for (int i = 15; i >= 0; i--) {
+		// Step 2: Read bit i and set SER pin
+		if ((data >> i) & 1) {
+			HAL_GPIO_WritePin(SER_GPIO_Port, SER_Pin, 1);   // SER HIGH
+		} else {
+			HAL_GPIO_WritePin(SER_GPIO_Port, SER_Pin, 0); // SER LOW
+		}
+
+		// Step 3: Pulse SRCLK (Serial Clock) HIGH then LOW
+		HAL_GPIO_WritePin(SRCLK_GPIO_Port, SRCLK_Pin, 1);
+		HAL_GPIO_WritePin(SRCLK_GPIO_Port, SRCLK_Pin, 0);
+	}
+
+	// Step 5: Pulse RCLK (Latch Clock) HIGH then LOW to output all bits
+	HAL_GPIO_WritePin(RCLK_GPIO_Port, RCLK_Pin, 1);
+	HAL_GPIO_WritePin(RCLK_GPIO_Port, RCLK_Pin, 0);
 }
 
 /* USER CODE END 4 */
