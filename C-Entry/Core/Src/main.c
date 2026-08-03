@@ -259,6 +259,12 @@ int main(void)
 
 		if (STATE == ALARM) {
 			if (alarmFirstStart == 1) {
+				// print ALARM on the LCD
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				char alarmStr[20];
+				snprintf(alarmStr, sizeof(alarmStr), "ALARM");
+				LCD_SendStr(alarmStr);
+
 				int timerStart = milliseconds;
 				// loops until it sees that no one has triggered LDR for over 2 seconds
 				while (1) {
