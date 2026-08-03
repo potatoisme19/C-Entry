@@ -182,3 +182,36 @@ void stepper_rotate_steps(uint16_t steps, uint8_t delay_ms) {
 		}
 	}
 }
+
+void FullStepReverse(int speed) {
+	HAL_Delay(speed);
+	// step 1
+	HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 0);
+	HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 0);
+	HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 1);
+	HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 1);
+
+	HAL_Delay(speed);
+
+	// step 2
+	HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 1);
+	HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 0);
+	HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 0);
+	HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 1);
+
+	HAL_Delay(speed);
+
+	// step 3
+	HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 1);
+	HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 1);
+	HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 0);
+	HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 0);
+
+	HAL_Delay(speed);
+
+	// step 4
+	HAL_GPIO_WritePin(COILA_GPIO_Port, COILA_Pin, 0);
+	HAL_GPIO_WritePin(COILB_GPIO_Port, COILB_Pin, 1);
+	HAL_GPIO_WritePin(COILC_GPIO_Port, COILC_Pin, 1);
+	HAL_GPIO_WritePin(COILD_GPIO_Port, COILD_Pin, 0);
+}

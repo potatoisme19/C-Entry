@@ -91,8 +91,8 @@ void Error_Handler(void);
 #define LDR2_GPIO_Port GPIOB
 #define COILD_Pin GPIO_PIN_2
 #define COILD_GPIO_Port GPIOB
-#define LED1_Pin GPIO_PIN_10
-#define LED1_GPIO_Port GPIOB
+#define LED_D1_Pin GPIO_PIN_10
+#define LED_D1_GPIO_Port GPIOB
 #define ROW1_Pin GPIO_PIN_11
 #define ROW1_GPIO_Port GPIOB
 #define ROW2_Pin GPIO_PIN_12
