@@ -1270,23 +1270,28 @@ bool checkPassword() {
 		int c = 0;
 		c = scanKeypadPassword();
 		if (c != 0) {
-			// backspace
 			if (c == '*') {
-				//backspace on LCD
+				// Backspace with lower-bound check
+				if (inputtedPasswordCount > 0) {
 				LCD_SendCmd(LCD_SHIFT_LEFT);
 				HAL_Delay(1);
 				LCD_SendData(' ');
 				HAL_Delay(1);
 				LCD_SendCmd(LCD_SHIFT_LEFT);
-				inputtedPassword[inputtedPasswordCount] = '\0';
+				
 				inputtedPasswordCount--;
+				inputtedPassword[inputtedPasswordCount] = '\0';
+				}
 			} else if (c == '#') {
 				inputtedPassword[inputtedPasswordCount] = '\0';
 				doneTyping = 1;
 				LCD_SendCmd(LCD_CLEAR_DISPLAY);
 			} else {
+				// Normal key entry with upper-bound check
+				if (inputtedPasswordCount < 19) {
 				LCD_SendData(c);
-				inputtedPassword[inputtedPasswordCount++] = c;
+				inputtedPassword[inputtedPasswordCount++] = (char)c;
+				}
 			}
 		}
 	}
