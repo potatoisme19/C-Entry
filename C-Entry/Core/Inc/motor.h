@@ -8,6 +8,9 @@
 #ifndef INC_MOTOR_H_
 #define INC_MOTOR_H_
 
+#include <stdint.h>
+#include "main.h"
+
 // goes anticlockwise
 void WaveStep(int speed);
 void FullStep(int speed);
