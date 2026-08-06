@@ -339,7 +339,7 @@ int main(void)
 					personDetected = true;
 					beamBrokenStart = milliseconds; // Start tailgating timer
 					} else {
-					// Check if beam stays broken for MORE than 5 seconds -> Tailgating!
+					// Check if beam stays broken for MORE than 5 seconds -> Tailgating
 					if (milliseconds - beamBrokenStart > 5000) {
 						tailgatingDetected = true;
 						break;
@@ -361,7 +361,7 @@ int main(void)
 				STATE = ALARM;
 			} else {
 				// Close gate safely: Rotate 90 degrees counter-clockwise
-				for (int i = 0; i < 128; i++) {
+				for (int i = 0; i < 512; i++) {
 				FullStepReverse(5);
 				}
 
@@ -1308,10 +1308,11 @@ void clearPeripherals() {
 	LCD_SendCmd(LCD_CLEAR_DISPLAY);
 	shift_register_write(0x0000);
 	HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, alarmLedState);
+	// Ensure all alarm LEDs are switched OFF
+	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, GPIO_PIN_RESET);
 }
 /* USER CODE END 4 */
 
