@@ -79,6 +79,11 @@ enum STATES {
 };
 // Sets the initial state of the gate
 int STATE = IDLE;
+int previousState = IDLE;
+
+//0 = gate closed, 1 = Gate open
+int isGateOpen = 0;
+
 // counts how many milliseconds since start of program
 volatile int milliseconds = 0;
 
@@ -96,9 +101,6 @@ int keypadSchedulePrint = 0;
 int forward = 1;
 int currentLCDBit = 0;
 
-// to clear LCD when emergency is called
-int emergencyStateChange = 0;
-
 // for event
 int eventFirstStart = 0;
 int lastPrinted = 0;
@@ -107,6 +109,12 @@ int lastPrinted = 0;
 int alarmFirstStart = 0;
 int alarmLedState = 0;
 int alarmCounter = 0;
+
+//emergency
+// to clear LCD when emergency is called
+int emergencyStateChange = 0;
+int emergencyBlinkCounter = 0;
+int emergencyBlinkState = 0;
 
 /* USER CODE END PV */
 
@@ -125,6 +133,7 @@ int scheduleChange(int scheduledMinutes, int forward, int value);
 bool checkPassword ();
 void shift_register_write(uint16_t data);
 void clearPeripherals();
+void Buzzer_Tone(uint32_t frequency_hz);
 
 /* USER CODE END PFP */
 
@@ -291,6 +300,7 @@ int main(void)
 				for (int i = 0;i < 128; i++) {
 					FullStepReverse(5);
 				}
+				isGateOpen = 0;
 				alarmFirstStart = 0;
 			}
 
@@ -324,18 +334,13 @@ int main(void)
 			// D1 - D4
 			if (STATE == ALARM && milliseconds - alarmCounter > 500) {
 			    alarmLedState = !alarmLedState;
-			    uint32_t arr = 0;
 			    if (alarmLedState) {
 			        shift_register_write(0xFFFF);
-		            arr = ((72000000 / 650) / 72) - 1;
+		            Buzzer_Tone(650);
 			    } else {
 			        shift_register_write(0x0000);
-		            arr = ((72000000 / 1200) / 72) - 1;
+		            Buzzer_Tone(1200);
 			    }
-			    // buzzer
-				TIM1->ARR = arr;
-				TIM1->CCR3 = (arr + 1) / 2;
-				HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
 
 				// D1 - D4
 		    	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, alarmLedState);
@@ -348,28 +353,92 @@ int main(void)
 		}
 
 		if (STATE == EMERGENCY) {
-			// clear peripherals
-			clearPeripherals();
-
 			if (emergencyStateChange) {
+				clearPeripherals();
 				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				LCD_SendStr("!! EMERGENCY!!");
 				emergencyStateChange = 0;
 				// if it changed to emergency in the middle of keypad input
+				// clear temporary keypad buffer
 				for (int i = 0; i < timeDigitNum; i++) {
 					timeRecorded[i] = '\0';
 				}
 				timeDigitNum = 0;
 			}
+
+			// open gate
+			if (!isGateOpen) {
+				stepper_rotate_steps(512, 3);
+				isGateOpen = 1;
+			}
+
+			// beep and blinking shift register 0.25s
+			if (milliseconds - emergencyBlinkCounter > 250) {
+				emergencyBlinkState = !emergencyBlinkState;
+				emergencyBlinkCounter = milliseconds;
+
+				if (emergencyBlinkState) {
+					shift_register_write(0xFFFF);
+					Buzzer_Tone(1000); // Beep at 1000 Hz
+				} else {
+					shift_register_write(0x0000);
+					Buzzer_Tone(0);      // Turn off PWM
+				}
+			}
+
 			// get uid
 			uidLen = PN532_ReadPassiveTarget(uid);
 
 			// check if success
 			if (uidLen > 0) {
-				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
+						| (uid[2] << 8) | uid[3];
 				// from EMERGENCY to IDLE
 				if (RFID_UID == scannedUID && uidLen > 0) {
+					// turn off beep and shift register
+					Buzzer_Tone(0);
+					shift_register_write(0x0000);
+
 					if (checkPassword()) {
-						STATE = IDLE;
+						// Password correct: Turn off alarm outputs
+						HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+
+						// Case 1: Returning to IDLE or KEYPAD
+						if (previousState == IDLE || previousState == KEYPAD) {
+							if (isGateOpen) {
+								for (int i = 0; i < 128; i++) {
+									FullStep(5);
+								}
+								isGateOpen = 0;
+							}
+							STATE = IDLE;
+						}
+						// Case 2: Returning to EVENT
+						else if (previousState == EVENT) {
+							// Check if event has not expired yet
+							if ((milliseconds - eventStartTime) < eventTime) {
+								STATE = EVENT;
+								eventFirstStart = 1; // Redraw LCD event screen
+								// Gate stays open! (isGateOpen remains 1)
+							} else {
+								// Event expired while in emergency
+								if (isGateOpen) {
+									for (int i = 0; i < 128; i++) {
+										FullStep(5);
+									}
+									isGateOpen = 0;
+								}
+								STATE = IDLE;
+							}
+						}
+						// Fallback safety (e.g. if previous state was ALARM)
+						else {
+							STATE = IDLE;
+						}
+					} else {
+						// Password failed/cancelled - re-flag emergency display update if needed
+						emergencyStateChange = 1;
 					}
 				}
 			}
@@ -403,6 +472,12 @@ int main(void)
 				char rotatingStr[17];
 				snprintf(rotatingStr, sizeof(rotatingStr), "ROTATING");
 				LCD_SendStr(rotatingStr);
+
+				if (!isGateOpen) {
+					stepper_rotate_steps(512, 5);
+					isGateOpen = 1;
+				}
+				eventFirstStart = 0;
 			}
 
 			if (milliseconds - lastPrinted >= 1000 && eventFirstStart == 0) {
@@ -417,21 +492,23 @@ int main(void)
 			shift_register_write(0xAAAA);
 			HAL_Delay(1);
 
-			if (eventFirstStart == 1) {
-				// open all doors
-				// rotate by 90 degrees (512 full steps)
-				// goes clockwise
-				stepper_rotate_steps(512, 5);
-				eventFirstStart = 0;
-			}
+//			if (eventFirstStart == 1) {
+//				// open all doors
+//				// rotate by 90 degrees (512 full steps)
+//				// goes clockwise
+//				if (!isGateOpen) {
+//					stepper_rotate_steps(512, 5);
+//					isGateOpen = 1;
+//				}
+//				eventFirstStart = 0;
+//			}
 
 			if (HAL_GPIO_ReadPin(SW4_GPIO_Port, SW4_Pin) == 1) {
 				LCD_SendCmd(LCD_CLEAR_DISPLAY);
-				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
 				char exitStr[17];
 				snprintf(exitStr, sizeof(exitStr), "EXITING");
 				LCD_SendStr(exitStr);
-				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
 				// if we want to end EVENT state early, press SW4 button
 				// we do this since getting uid will make LCD print slower
 				int timeout = 1000 * 60; // 1 minute timeout
@@ -449,10 +526,13 @@ int main(void)
 								STATE = IDLE;
 								eventTime = 0;
 								eventStartTime = 0;
-								// close gates
-								for (int i = 0; i < 128; i++) {
-									// goes anticlockwise
-									FullStep(5);
+								if (isGateOpen) {
+									// close gates
+									for (int i = 0; i < 128; i++) {
+										// goes anticlockwise
+										FullStep(5);
+									}
+									isGateOpen = 0;
 								}
 								// only break while loop if password correct
 								// otherwise keep looping until timeout
@@ -1078,6 +1158,9 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	if (GPIO_Pin == SW1_Pin) {
+		if (STATE != EMERGENCY) {
+			previousState = STATE;
+		}
 		emergencyStateChange = 1;
 		STATE = EMERGENCY;
 	}
@@ -1136,10 +1219,18 @@ bool checkPassword() {
 	int inputtedPasswordCount = 0;
 	int doneTyping = 0;
 
+	emergencyStateChange = 0;
+	LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+
+
 	// timeout is 10 mins
 	int timeout = 1000 * 60;
 	int timerStart = milliseconds;
 	while (((milliseconds - timerStart) < timeout) && (doneTyping == 0)) {
+		if (emergencyStateChange == 1) {
+			LCD_SendCmd(LCD_CLEAR_DISPLAY);
+			return false;
+		}
 		int c = 0;
 		c = scanKeypadPassword();
 		if (c != 0) {
@@ -1173,6 +1264,7 @@ bool checkPassword() {
 }
 
 void clearPeripherals() {
+	alarmLedState = 0;
 	LCD_SendCmd(LCD_CLEAR_DISPLAY);
 	shift_register_write(0x0000);
 	HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
@@ -1180,6 +1272,22 @@ void clearPeripherals() {
 	HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, alarmLedState);
 	HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, alarmLedState);
 	HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, alarmLedState);
+}
+
+
+void Buzzer_Tone(uint32_t frequency_hz) {
+    if (frequency_hz == 0) {
+        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+        return;
+    }
+
+    // With Prescaler = 71, Timer Clock = 1 MHz (1,000,000 Hz)
+    uint32_t arr = (1000000 / frequency_hz) - 1;
+
+    TIM1->ARR = arr;
+    TIM1->CCR3 = (arr + 1) / 2; // 50% Duty Cycle
+
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
 }
 /* USER CODE END 4 */
 
