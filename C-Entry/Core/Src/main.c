@@ -111,6 +111,10 @@ int alarmCounter = 0;
 // for open state
 int openStateChange = 0;
 
+// Extra features added
+int occupancyCount = 0;   // Real-time occupant tracking
+int isExitMode = 0;       // 0 = Entering (NFC), 1 = Exiting (LDR2)
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
