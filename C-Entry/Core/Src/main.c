@@ -297,31 +297,75 @@ int main(void)
 		if (STATE == OPEN) {
 			if (openStateChange == 1) {
 				clearPeripherals();
-				LCD_SendStr("WELCOME!");
-				shift_register_write(0xFFFF);
-				// rotate 90 degrees
+
+				// 1. Display Welcome / Goodbye message & Occupancy counter
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				if (isExitMode) {
+				LCD_SendStr("   GOODBYE!   ");
+				} else {
+				LCD_SendStr("   WELCOME!   ");
+				}
+
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+				char countStr[17];
+				snprintf(countStr, sizeof(countStr), "People In: %d", occupancyCount);
+				LCD_SendStr(countStr);
+
+				// 2. Shift register low (0x0000) as requested
+				shift_register_write(0x0000);
+
+				// 3. Gate open (Motor rotates 90 degrees clockwise = 512 steps)
 				stepper_rotate_steps(512, 5);
+
+				openStateChange = 0;
 			}
 
-			// detect tailgating
-			// start ADC, LDR 2
-			HAL_ADC_Start(&hadc3);
-			// wait until finished converting
-			HAL_ADC_PollForConversion(&hadc3, 100);
-			int val = HAL_ADC_GetValue(&hadc3);
-			// set threshold to be 500
-			if (val < 500) {
-				// still triggered, reset timer,
-				timerStart = milliseconds;
-			} else {
-				// check for 2 seconds if its still greater than 500
-				// i.e check that person isnt near the gate
-				// check every half a second
-				if (milliseconds - timerStart > 2000) {
-					// assign alarmFirstStart = 1, when tailgate detected
-					STATE = ALARM;
-					alarmFirstStart = 1;
+			// 4. LDR2 Passage Monitoring & Tailgating Timer Detection
+			int passageTimer = milliseconds;
+			int beamBrokenStart = 0;
+			bool personDetected = false;
+			bool tailgatingDetected = false;
+
+			// Monitor for passage for up to 10 seconds
+			while ((milliseconds - passageTimer < 10000) && (STATE != EMERGENCY)) {
+				HAL_ADC_Start(&hadc3);
+				if (HAL_ADC_PollForConversion(&hadc3, 50) == HAL_OK) {
+				int val = HAL_ADC_GetValue(&hadc3);
+
+				if (val < 500) { // Beam is broken (person standing in/crossing gate)
+					if (!personDetected) {
+					personDetected = true;
+					beamBrokenStart = milliseconds; // Start tailgating timer
+					} else {
+					// Check if beam stays broken for MORE than 5 seconds -> Tailgating!
+					if (milliseconds - beamBrokenStart > 5000) {
+						tailgatingDetected = true;
+						break;
+					}
+					}
+				} else { // Beam is clear
+					if (personDetected) {
+					// User has fully cleared the gate area
+					HAL_Delay(300); // Safety buffer before closing
+					break;
+					}
 				}
+				}
+			}
+
+			// 5. Transition to ALARM or Close Gate & Return to IDLE
+			if (tailgatingDetected) {
+				alarmFirstStart = 1;
+				STATE = ALARM;
+			} else {
+				// Close gate safely: Rotate 90 degrees counter-clockwise
+				for (int i = 0; i < 128; i++) {
+				FullStepReverse(5);
+				}
+
+				clearPeripherals();
+				STATE = IDLE;
 			}
 
 		}
