@@ -303,9 +303,9 @@ int main(void)
 				LCD_SendCmd(LCD_CLEAR_DISPLAY);
 				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
 				if (isExitMode) {
-				LCD_SendStr("   GOODBYE!   ");
+					LCD_SendStr("   GOODBYE!   ");
 				} else {
-				LCD_SendStr("   WELCOME!   ");
+					LCD_SendStr("   WELCOME!   ");
 				}
 
 				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
@@ -332,26 +332,26 @@ int main(void)
 			while ((milliseconds - passageTimer < 10000) && (STATE != EMERGENCY)) {
 				HAL_ADC_Start(&hadc3);
 				if (HAL_ADC_PollForConversion(&hadc3, 50) == HAL_OK) {
-				int val = HAL_ADC_GetValue(&hadc3);
+					int val = HAL_ADC_GetValue(&hadc3);
 
-				if (val < 500) { // Beam is broken (person standing in/crossing gate)
-					if (!personDetected) {
-					personDetected = true;
-					beamBrokenStart = milliseconds; // Start tailgating timer
-					} else {
-					// Check if beam stays broken for MORE than 5 seconds -> Tailgating
-					if (milliseconds - beamBrokenStart > 5000) {
-						tailgatingDetected = true;
+					if (val < 500) { // Beam is broken (person standing in/crossing gate)
+						if (!personDetected) {
+						personDetected = true;
+						beamBrokenStart = milliseconds; // Start tailgating timer
+						} else {
+						// Check if beam stays broken for MORE than 5 seconds -> Tailgating
+						if (milliseconds - beamBrokenStart > 5000) {
+							tailgatingDetected = true;
+							break;
+						}
+						}
+					} else { // Beam is clear
+						if (personDetected) {
+						// User has fully cleared the gate area
+						HAL_Delay(300); // Safety buffer before closing
 						break;
+						}
 					}
-					}
-				} else { // Beam is clear
-					if (personDetected) {
-					// User has fully cleared the gate area
-					HAL_Delay(300); // Safety buffer before closing
-					break;
-					}
-				}
 				}
 			}
 
