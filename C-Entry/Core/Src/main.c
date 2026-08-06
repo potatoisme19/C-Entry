@@ -239,27 +239,59 @@ int main(void)
 
 			// check if success
 			if (uidLen > 0) {
-			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
-			  // from IDLE to KEYPAD_STATE
-			  if (RFID_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
-				  if (checkPassword()) {
-					  // reset eventStartTime
-					  eventStartTime = 0;
-					  STATE = KEYPAD;
-					  keypadSchedulePrint = 1;
-					  keypadStartTimeout = milliseconds;
-				  }
-			  }
+				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+
+				// Admin Card Scanned -> Go to KEYPAD state
+				if (RFID_UID == scannedUID && STATE != EMERGENCY) {
+				if (checkPassword()) {
+					eventStartTime = 0;
+					STATE = KEYPAD;
+					keypadSchedulePrint = 1;
+					keypadStartTimeout = milliseconds;
+				}
+				}
+				// Authorised NFC Card Scanned -> Go to OPEN state (Entry)
+				else if (NFC_UID == scannedUID && STATE != EMERGENCY) {
+				// Audio + Visual Indicator
+				HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, GPIO_PIN_SET);
+				sound_beep(1800, 150);
+				HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, GPIO_PIN_RESET);
+
+				isExitMode = 0;
+				occupancyCount++;
+				openStateChange = 1;
+				STATE = OPEN;
+				}
+				// Unauthorised Card
+				else if (STATE != EMERGENCY) {
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				LCD_SendStr("ACCESS DENIED");
+				sound_beep(400, 300);
+				HAL_Delay(500);
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				}
 			}
 
-			// turns to event after scheduled time
-			// if eventStartTime == 0 then its not initialised
+			// 2. Check LDR2 for Exiting Users
+			HAL_ADC_Start(&hadc3);
+			if (HAL_ADC_PollForConversion(&hadc3, 10) == HAL_OK) {
+				int ldrVal = HAL_ADC_GetValue(&hadc3);
+				if (ldrVal < 500 && STATE != EMERGENCY) {
+				sound_beep(1200, 100);
+				isExitMode = 1;
+				if (occupancyCount > 0) {
+					occupancyCount--;
+				}
+				openStateChange = 1;
+				STATE = OPEN;
+				}
+			}
+
+			// 3. Event schedule check
 			if (milliseconds >= eventStartTime && eventStartTime != 0 && STATE != EMERGENCY) {
-			  STATE = EVENT;
+				STATE = EVENT;
 			}
-
-			// set openStateChange = 1;
-
 		}
 
 		if (STATE == OPEN) {
