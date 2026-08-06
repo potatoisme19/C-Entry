@@ -108,6 +108,10 @@ int alarmFirstStart = 0;
 int alarmLedState = 0;
 int alarmCounter = 0;
 
+// for idle
+int idleTimerStart = 0;
+int idleStart = 1;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -125,6 +129,7 @@ int scheduleChange(int scheduledMinutes, int forward, int value);
 bool checkPassword ();
 void shift_register_write(uint16_t data);
 void clearPeripherals();
+void buzzerTone(int freq);
 
 /* USER CODE END PFP */
 
@@ -224,8 +229,13 @@ int main(void)
 		//	  UART_Print(m);
 
 		if (STATE == IDLE) {
-			// clear all peripherals
-			clearPeripherals();
+			if (idleStart == 1) {
+				// clear all peripherals
+				clearPeripherals();
+				LCD_SendStr("IDLE");
+				idleStart = 0;
+				// if gate open, close it
+			}
 
 			// get uid
 			uidLen = PN532_ReadPassiveTarget(uid);
@@ -235,6 +245,8 @@ int main(void)
 			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
 			  // from IDLE to KEYPAD_STATE
 			  if (RFID_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
+				  // move to second line before checking password
+				  LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
 				  if (checkPassword()) {
 					  // reset eventStartTime
 					  eventStartTime = 0;
@@ -242,8 +254,79 @@ int main(void)
 					  keypadSchedulePrint = 1;
 					  keypadStartTimeout = milliseconds;
 				  }
+			  } else if (NFC_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
+				  // play correct buzzer tone
+				  int rest = 0;
+				  int tune1[] = {
+					622, rest, 932, 784, 784, 698,
+					622, rest, 932, 784, 784, 698,
+					740, 784, rest, 932, 784, 784,
+					698, 622, 523, 622, 698,
+					932, 523, 622, 698, 622
+			      };
+				  int i = 0;
+				  int lastNoteTime = 0;
+				  while (i < sizeof(tune1)) {
+					  if (STATE == EMERGENCY) {
+						  break;
+					  }
+
+					  // only play and increment if time between is 25 milliseconds
+					  while (milliseconds - lastNoteTime < 25) {
+						  buzzerTone(tune1[i]);
+						  lastNoteTime = milliseconds;
+						  i++;
+					  }
+				  }
+				  // change state to OPEN
+				  STATE = OPEN;
+
+			  } else {
+				  // play incorrect buzzer tone
+				  int rest = 0;
+				  int tune1[] = {
+					622, rest, 932, 784, 784, 698,
+					622, rest, 932, 784, 784, 698,
+					740, 784, rest, 932, 784, 784,
+					698, 622, 523, 622, 698,
+					932, 523, 622, 698, 622
+			      };
+				  int i = 0;
+				  int lastNoteTime = 0;
+				  while (i < sizeof(tune1)) {
+					  if (STATE == EMERGENCY) {
+						  break;
+					  }
+
+					  // only play and increment if time between is 25 milliseconds
+					  while (milliseconds - lastNoteTime < 25) {
+						  buzzerTone(tune1[i]);
+						  lastNoteTime = milliseconds;
+						  i++;
+					  }
+				  }
 			  }
 			}
+
+			// detect if someone is leaving the building
+			HAL_ADC_Start(&hadc3);
+			// wait until finished converting
+			HAL_ADC_PollForConversion(&hadc3, 100);
+			int val = HAL_ADC_GetValue(&hadc3);
+			// debounce, 500 is the threshold
+			if (val < 500) {
+				// still triggered, reset timer,
+				idleTimerStart = milliseconds;
+			} else {
+				// check for 500 milliseconds
+				// person needs to wait half a second for gate to start opening
+				if (milliseconds - idleTimerStart > 500) {
+					// exiting detected
+					STATE = OPEN;
+				}
+
+			}
+
 
 			// turns to event after scheduled time
 			// if eventStartTime == 0 then its not initialised
@@ -1172,14 +1255,26 @@ bool checkPassword() {
 	return false;
 }
 
+void buzzerTone(int freq) {
+	if (freq == 0) {
+		HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+	}
+
+	int arr = ((72000000 / freq) / 72) - 1;
+	TIM1->ARR = arr;
+	TIM1->CCR3 = (arr + 1) / 2;
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+
+}
+
 void clearPeripherals() {
 	LCD_SendCmd(LCD_CLEAR_DISPLAY);
 	shift_register_write(0x0000);
 	HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, alarmLedState);
+	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, 0);
+	HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, 0);
+	HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, 0);
+	HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, 0);
 }
 /* USER CODE END 4 */
 
