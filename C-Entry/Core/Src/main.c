@@ -1109,6 +1109,19 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/**
+ * @brief Plays a tone on TIM1 Channel 3 PWM
+ */
+void sound_beep(uint16_t freq_hz, uint16_t duration_ms) {
+    if (freq_hz == 0) return;
+    uint32_t arr = ((72000000 / freq_hz) / 72) - 1;
+    TIM1->ARR = arr;
+    TIM1->CCR3 = (arr + 1) / 2;
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+    HAL_Delay(duration_ms);
+    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+}
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	if (GPIO_Pin == SW1_Pin) {
 		emergencyStateChange = 1;
