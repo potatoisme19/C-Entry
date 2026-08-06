@@ -110,11 +110,18 @@ int alarmFirstStart = 0;
 int alarmLedState = 0;
 int alarmCounter = 0;
 
-//emergency
+// for open state
+int openStateChange = 0;
+
+// Extra features added
+int occupancyCount = 0;   // Real-time occupant tracking
+int isExitMode = 0;       // 0 = Entering (NFC), 1 = Exiting (LDR2)
+
 // to clear LCD when emergency is called
 int emergencyStateChange = 0;
 int emergencyBlinkCounter = 0;
 int emergencyBlinkState = 0;
+
 
 /* USER CODE END PV */
 
@@ -133,6 +140,7 @@ int scheduleChange(int scheduledMinutes, int forward, int value);
 bool checkPassword ();
 void shift_register_write(uint16_t data);
 void clearPeripherals();
+void sound_beep(uint16_t freq_hz, uint16_t duration_ms);
 void Buzzer_Tone(uint32_t frequency_hz);
 
 /* USER CODE END PFP */
@@ -241,29 +249,135 @@ int main(void)
 
 			// check if success
 			if (uidLen > 0) {
-			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
-			  // from IDLE to KEYPAD_STATE
-			  if (RFID_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
-				  if (checkPassword()) {
-					  // reset eventStartTime
-					  eventStartTime = 0;
-					  STATE = KEYPAD;
-					  keypadSchedulePrint = 1;
-					  keypadStartTimeout = milliseconds;
-				  }
-			  }
+				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
+
+				// Admin Card Scanned -> Go to KEYPAD state
+				if (RFID_UID == scannedUID && STATE != EMERGENCY) {
+				if (checkPassword()) {
+					eventStartTime = 0;
+					STATE = KEYPAD;
+					keypadSchedulePrint = 1;
+					keypadStartTimeout = milliseconds;
+				}
+				}
+				// Authorised NFC Card Scanned -> Go to OPEN state (Entry)
+				else if (NFC_UID == scannedUID && STATE != EMERGENCY) {
+				// Audio + Visual Indicator
+				HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, GPIO_PIN_SET);
+				sound_beep(1800, 150);
+				HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, GPIO_PIN_RESET);
+
+				isExitMode = 0;
+				occupancyCount++;
+				openStateChange = 1;
+				STATE = OPEN;
+				}
+				// Unauthorised Card
+				else if (STATE != EMERGENCY) {
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				LCD_SendStr("ACCESS DENIED");
+				sound_beep(400, 300);
+				HAL_Delay(500);
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				}
 			}
 
-			// turns to event after scheduled time
-			// if eventStartTime == 0 then its not initialised
+			// 2. Check LDR2 for Exiting Users
+			HAL_ADC_Start(&hadc3);
+			if (HAL_ADC_PollForConversion(&hadc3, 10) == HAL_OK) {
+				int ldrVal = HAL_ADC_GetValue(&hadc3);
+				if (ldrVal < 500 && STATE != EMERGENCY) {
+				sound_beep(1200, 100);
+				isExitMode = 1;
+				if (occupancyCount > 0) {
+					occupancyCount--;
+				}
+				openStateChange = 1;
+				STATE = OPEN;
+				}
+			}
+
+			// 3. Event schedule check
 			if (milliseconds >= eventStartTime && eventStartTime != 0 && STATE != EMERGENCY) {
-			  STATE = EVENT;
+				STATE = EVENT;
 			}
-
 		}
 
 		if (STATE == OPEN) {
-			// assign alarmFirstStart = 1, when tailgate detected
+			if (openStateChange == 1) {
+				clearPeripherals();
+
+				// 1. Display Welcome / Goodbye message & Occupancy counter
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				if (isExitMode) {
+					LCD_SendStr("   GOODBYE!   ");
+				} else {
+					LCD_SendStr("   WELCOME!   ");
+				}
+
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+				char countStr[17];
+				snprintf(countStr, sizeof(countStr), "People In: %d", occupancyCount);
+				LCD_SendStr(countStr);
+
+				// 2. Shift register low (0x0000) as requested
+				shift_register_write(0x0000);
+
+				// 3. Gate open (Motor rotates 90 degrees clockwise = 512 steps)
+				stepper_rotate_steps(512, 5);
+
+				openStateChange = 0;
+			}
+
+			// 4. LDR2 Passage Monitoring & Tailgating Timer Detection
+			int passageTimer = milliseconds;
+			int beamBrokenStart = 0;
+			bool personDetected = false;
+			bool tailgatingDetected = false;
+
+			// Monitor for passage for up to 10 seconds
+			while ((milliseconds - passageTimer < 10000) && (STATE != EMERGENCY)) {
+				HAL_ADC_Start(&hadc3);
+				if (HAL_ADC_PollForConversion(&hadc3, 50) == HAL_OK) {
+					int val = HAL_ADC_GetValue(&hadc3);
+
+					if (val < 500) { // Beam is broken (person standing in/crossing gate)
+						if (!personDetected) {
+						personDetected = true;
+						beamBrokenStart = milliseconds; // Start tailgating timer
+						} else {
+						// Check if beam stays broken for MORE than 5 seconds -> Tailgating
+						if (milliseconds - beamBrokenStart > 5000) {
+							tailgatingDetected = true;
+							break;
+						}
+						}
+					} else { // Beam is clear
+						if (personDetected) {
+						// User has fully cleared the gate area
+						HAL_Delay(300); // Safety buffer before closing
+						break;
+						}
+					}
+				}
+			}
+
+			// 5. Transition to ALARM or Close Gate & Return to IDLE
+			if (tailgatingDetected) {
+				alarmFirstStart = 1;
+				STATE = ALARM;
+			} else {
+				// Close gate safely: Rotate 90 degrees counter-clockwise
+				for (int i = 0; i < 512; i++) {
+				FullStepReverse(5);
+				}
+
+				clearPeripherals();
+				STATE = IDLE;
+			}
+
 		}
 
 		if (STATE == ALARM) {
@@ -1156,6 +1270,19 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/**
+ * @brief Plays a tone on TIM1 Channel 3 PWM
+ */
+void sound_beep(uint16_t freq_hz, uint16_t duration_ms) {
+    if (freq_hz == 0) return;
+    uint32_t arr = ((72000000 / freq_hz) / 72) - 1;
+    TIM1->ARR = arr;
+    TIM1->CCR3 = (arr + 1) / 2;
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+    HAL_Delay(duration_ms);
+    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+}
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 	if (GPIO_Pin == SW1_Pin) {
 		if (STATE != EMERGENCY) {
@@ -1234,23 +1361,28 @@ bool checkPassword() {
 		int c = 0;
 		c = scanKeypadPassword();
 		if (c != 0) {
-			// backspace
 			if (c == '*') {
-				//backspace on LCD
+				// Backspace with lower-bound check
+				if (inputtedPasswordCount > 0) {
 				LCD_SendCmd(LCD_SHIFT_LEFT);
 				HAL_Delay(1);
 				LCD_SendData(' ');
 				HAL_Delay(1);
 				LCD_SendCmd(LCD_SHIFT_LEFT);
-				inputtedPassword[inputtedPasswordCount] = '\0';
+				
 				inputtedPasswordCount--;
+				inputtedPassword[inputtedPasswordCount] = '\0';
+				}
 			} else if (c == '#') {
 				inputtedPassword[inputtedPasswordCount] = '\0';
 				doneTyping = 1;
 				LCD_SendCmd(LCD_CLEAR_DISPLAY);
 			} else {
+				// Normal key entry with upper-bound check
+				if (inputtedPasswordCount < 19) {
 				LCD_SendData(c);
-				inputtedPassword[inputtedPasswordCount++] = c;
+				inputtedPassword[inputtedPasswordCount++] = (char)c;
+				}
 			}
 		}
 	}
@@ -1268,10 +1400,11 @@ void clearPeripherals() {
 	LCD_SendCmd(LCD_CLEAR_DISPLAY);
 	shift_register_write(0x0000);
 	HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
-	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, alarmLedState);
-	HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, alarmLedState);
+	// Ensure all alarm LEDs are switched OFF
+	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, GPIO_PIN_RESET);
 }
 
 

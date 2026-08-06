@@ -5,18 +5,9 @@
  *      Author: agathakomarudin
  */
 
-#include <stdint.h>
-#include "main.h"
+#include "lcd.h"
 
 #define LCD_CLEAR_DISPLAY 0b00000001
-
-void LCD_PutNibble(uint8_t nibble);
-void LCD_SendData(uint8_t c);
-void LCD_SendCmd(uint8_t c);
-void LCD_Pulse();
-void LCD_SendStr(char *str);
-void LCD_init();
-
 
 void LCD_PutNibble(uint8_t nibble) {
 	uint8_t D4 = nibble & 1;
@@ -32,18 +23,18 @@ void LCD_PutNibble(uint8_t nibble) {
 
 void LCD_SendData(uint8_t c) {
 	// RS = 1
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, 1);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_SET);
 	LCD_PutNibble(c >> 4);
 	LCD_Pulse();
 	LCD_PutNibble(c & 0x0F);
 	LCD_Pulse();
 	// RS = 0
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, 0);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
 }
 
 void LCD_SendCmd(uint8_t c) {
 	// RS = 0;
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, 0);
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, GPIO_PIN_RESET);
 	LCD_PutNibble(c >> 4);
 	LCD_Pulse();
 	LCD_PutNibble(c & 0x0F);
@@ -52,10 +43,10 @@ void LCD_SendCmd(uint8_t c) {
 
 void LCD_Pulse() {
 	// E = 1;
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, 1);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_SET);
 	HAL_Delay(1);
 	// E = 0;
-	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, 0);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_2, GPIO_PIN_RESET);
 	HAL_Delay(1);
 }
 
@@ -77,9 +68,9 @@ void LCD_SetCursor(uint8_t row, uint8_t col)
 
     // Calculate DDRAM address based on row and column
         if (row == 0) {
-            address = 0x80 + col; // Row 0 starts at DDRAM address 0x00 (0x80 command mask)
+            address = SET_DDRAM_ADDRESS + LCD_FIRST_LINE + col; // Row 0 starts at DDRAM address 0x00 (0x80 command mask)
         } else {
-            address = 0xC0 + col; // Row 1 starts at DDRAM address 0x40 (0x80 command mask + 0x40)
+            address = SET_DDRAM_ADDRESS + LCD_SECOND_LINE + col; // Row 1 starts at DDRAM address 0x40 (0x80 command mask + 0x40)
         }
 
         // Send the address command to the LCD

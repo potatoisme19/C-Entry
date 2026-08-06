@@ -8,31 +8,37 @@
 #include "main.h"
 
 // initalise arrays
-uint8_t key_map[4][4] = {{'1', '2', '3', 'A'},
-					   {'4', '5', '6', 'B'},
-					   {'7', '8', '9', 'C'},
-					   {'*', '0', '#', 'D'}};
-uint16_t colpin[4] = {GPIO_PIN_8, GPIO_PIN_9, GPIO_PIN_10, GPIO_PIN_11};
-uint16_t rowpin[4] = {GPIO_PIN_11, GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14};
+uint8_t key_map[4][4] = {
+	{'1', '2', '3', 'A'},
+	{'4', '5', '6', 'B'},
+	{'7', '8', '9', 'C'},
+	{'*', '0', '#', 'D'}};
+static const uint16_t colpin[4] = {GPIO_PIN_8, GPIO_PIN_9, GPIO_PIN_10, GPIO_PIN_11};
+static const uint16_t rowpin[4] = {GPIO_PIN_11, GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14};
 
 
 uint8_t scan_keypad() {
 	uint8_t c = 0;
 
 	for (int col = 0; col < 4; col++) {
-		HAL_GPIO_WritePin(GPIOA, colpin[col], 1);
+		HAL_GPIO_WritePin(GPIOA, colpin[col], GPIO_PIN_SET);
 		for (int row = 0; row < 4; row++) {
-			if (HAL_GPIO_ReadPin(GPIOB, rowpin[row]) == 1) {
+			if (HAL_GPIO_ReadPin(GPIOB, rowpin[row]) == GPIO_PIN_SET) {
 				// debounce
 				HAL_Delay(20);
-				if (HAL_GPIO_ReadPin(GPIOB, rowpin[row]) == 1) {
+				if (HAL_GPIO_ReadPin(GPIOB, rowpin[row]) == GPIO_PIN_SET) {
 					c = key_map[row][col];
 				}
+				// Wait for button release with a 500ms safety timeout to prevent system freeze
+                		uint32_t releaseTimeout = HAL_GetTick();
 				// stops until button released
-				while (HAL_GPIO_ReadPin(GPIOB, rowpin[row]) == 1) {}
+				while ((HAL_GPIO_ReadPin(GPIOB, rowpin[row]) == GPIO_PIN_SET) && 
+					(HAL_GetTick() - releaseTimeout < 500)) {
+					// Safety pass-through
+				}
 			}
 		}
-		HAL_GPIO_WritePin(GPIOA, colpin[col], 0);
+		HAL_GPIO_WritePin(GPIOA, colpin[col], GPIO_PIN_RESET);
 	}
 	return c;
 }

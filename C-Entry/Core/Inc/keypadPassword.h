@@ -8,6 +8,8 @@
 #ifndef SRC_KEYPADPASSWORD_H_
 #define SRC_KEYPADPASSWORD_H_
 
+#include <stdint.h>
+
 uint8_t scanKeypadPassword(void);
 
 #endif /* SRC_KEYPADPASSWORD_H_ */
