@@ -132,6 +132,7 @@ int scheduleChange(int scheduledMinutes, int forward, int value);
 bool checkPassword ();
 void shift_register_write(uint16_t data);
 void clearPeripherals();
+void sound_beep(uint16_t freq_hz, uint16_t duration_ms);
 
 /* USER CODE END PFP */
 
