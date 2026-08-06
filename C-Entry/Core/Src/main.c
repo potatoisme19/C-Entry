@@ -254,7 +254,31 @@ int main(void)
 		}
 
 		if (STATE == OPEN) {
-			// assign alarmFirstStart = 1, when tailgate detected
+			clearPeripherals();
+			LCD_SendStr("WELCOME!");
+			shift_register_write(0xFFFF);
+
+			// detect tailgating
+			// start ADC, LDR 2
+			HAL_ADC_Start(&hadc3);
+			// wait until finished converting
+			HAL_ADC_PollForConversion(&hadc3, 100);
+			int val = HAL_ADC_GetValue(&hadc3);
+			// set threshold to be 500
+			if (val < 500) {
+				// still triggered, reset timer,
+				timerStart = milliseconds;
+			} else {
+				// check for 2 seconds if its still greater than 500
+				// i.e check that person isnt near the gate
+				// check every half a second
+				if (milliseconds - timerStart > 2000) {
+					// assign alarmFirstStart = 1, when tailgate detected
+					STATE = ALARM;
+					alarmFirstStart = 1;
+				}
+			}
+
 		}
 
 		if (STATE == ALARM) {
