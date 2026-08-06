@@ -134,7 +134,6 @@ bool checkPassword ();
 void shift_register_write(uint16_t data);
 void clearPeripherals();
 void Buzzer_Tone(uint32_t frequency_hz);
-void Buzzer_Off(void);
 
 /* USER CODE END PFP */
 
@@ -301,6 +300,7 @@ int main(void)
 				for (int i = 0;i < 128; i++) {
 					FullStepReverse(5);
 				}
+				isGateOpen = 0;
 				alarmFirstStart = 0;
 			}
 
@@ -334,18 +334,13 @@ int main(void)
 			// D1 - D4
 			if (STATE == ALARM && milliseconds - alarmCounter > 500) {
 			    alarmLedState = !alarmLedState;
-			    uint32_t arr = 0;
 			    if (alarmLedState) {
 			        shift_register_write(0xFFFF);
-		            arr = ((72000000 / 650) / 72) - 1;
+		            Buzzer_Tone(650);
 			    } else {
 			        shift_register_write(0x0000);
-		            arr = ((72000000 / 1200) / 72) - 1;
+		            Buzzer_Tone(1200);
 			    }
-			    // buzzer
-				TIM1->ARR = arr;
-				TIM1->CCR3 = (arr + 1) / 2;
-				HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
 
 				// D1 - D4
 		    	HAL_GPIO_WritePin(LED_D1_GPIO_Port, LED_D1_Pin, alarmLedState);
@@ -388,7 +383,7 @@ int main(void)
 					Buzzer_Tone(1000); // Beep at 1000 Hz
 				} else {
 					shift_register_write(0x0000);
-					Buzzer_Off();      // Turn off PWM
+					Buzzer_Tone(0);      // Turn off PWM
 				}
 			}
 
@@ -402,7 +397,7 @@ int main(void)
 				// from EMERGENCY to IDLE
 				if (RFID_UID == scannedUID && uidLen > 0) {
 					// turn off beep and shift register
-					Buzzer_Off();
+					Buzzer_Tone(0);
 					shift_register_write(0x0000);
 
 					if (checkPassword()) {
@@ -1269,6 +1264,7 @@ bool checkPassword() {
 }
 
 void clearPeripherals() {
+	alarmLedState = 0;
 	LCD_SendCmd(LCD_CLEAR_DISPLAY);
 	shift_register_write(0x0000);
 	HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
@@ -1292,10 +1288,6 @@ void Buzzer_Tone(uint32_t frequency_hz) {
     TIM1->CCR3 = (arr + 1) / 2; // 50% Duty Cycle
 
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-}
-
-void Buzzer_Off(void) {
-    HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
 }
 /* USER CODE END 4 */
 
