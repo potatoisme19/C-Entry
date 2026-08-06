@@ -392,63 +392,58 @@ int main(void)
 				}
 			}
 
-			// rate limited RFID read (100ms)
-			static int lastRFIDCheck = 0;
-			if (milliseconds - lastRFIDCheck > 100) {
-				lastRFIDCheck = milliseconds;
-				// get uid
-				uidLen = PN532_ReadPassiveTarget(uid);
+			// get uid
+			uidLen = PN532_ReadPassiveTarget(uid);
 
-				// check if success
-				if (uidLen > 0) {
-					uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
-							| (uid[2] << 8) | uid[3];
-					// from EMERGENCY to IDLE
-					if (RFID_UID == scannedUID && uidLen > 0) {
-					    // turn off beep and shift register
-					    Buzzer_Off();
-					    shift_register_write(0x0000);
+			// check if success
+			if (uidLen > 0) {
+				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
+						| (uid[2] << 8) | uid[3];
+				// from EMERGENCY to IDLE
+				if (RFID_UID == scannedUID && uidLen > 0) {
+					// turn off beep and shift register
+					Buzzer_Off();
+					shift_register_write(0x0000);
 
-					    if (checkPassword()) {
-					        // Password correct: Turn off alarm outputs
-					        HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+					if (checkPassword()) {
+						// Password correct: Turn off alarm outputs
+						HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
 
-					        // Case 1: Returning to IDLE or KEYPAD
-					        if (previousState == IDLE || previousState == KEYPAD) {
-					            if (isGateOpen) {
-					                for (int i = 0; i < 128; i++) {
-					                    FullStep(5);
-					                }
-					                isGateOpen = 0;
-					            }
-					            STATE = IDLE;
-					        }
-					        // Case 2: Returning to EVENT
-					        else if (previousState == EVENT) {
-					            // Check if event has not expired yet
-					            if ((milliseconds - eventStartTime) < eventTime) {
-					                STATE = EVENT;
-					                eventFirstStart = 1; // Redraw LCD event screen
-					                // Gate stays open! (isGateOpen remains 1)
-					            } else {
-					                // Event expired while in emergency
-					                if (isGateOpen) {
-					                    for (int i = 0; i < 128; i++) {
-					                        FullStep(5);
-					                    }
-					                    isGateOpen = 0;
-					                }
-					                STATE = IDLE;
-					            }
-					        }
-					        // Fallback safety (e.g. if previous state was ALARM)
-					        else {
-					            STATE = IDLE;
-					        }
-					    } else {
-					        // Password failed/cancelled - re-flag emergency display update if needed
-					        emergencyStateChange = 1;
-					    }
+						// Case 1: Returning to IDLE or KEYPAD
+						if (previousState == IDLE || previousState == KEYPAD) {
+							if (isGateOpen) {
+								for (int i = 0; i < 128; i++) {
+									FullStep(5);
+								}
+								isGateOpen = 0;
+							}
+							STATE = IDLE;
+						}
+						// Case 2: Returning to EVENT
+						else if (previousState == EVENT) {
+							// Check if event has not expired yet
+							if ((milliseconds - eventStartTime) < eventTime) {
+								STATE = EVENT;
+								eventFirstStart = 1; // Redraw LCD event screen
+								// Gate stays open! (isGateOpen remains 1)
+							} else {
+								// Event expired while in emergency
+								if (isGateOpen) {
+									for (int i = 0; i < 128; i++) {
+										FullStep(5);
+									}
+									isGateOpen = 0;
+								}
+								STATE = IDLE;
+							}
+						}
+						// Fallback safety (e.g. if previous state was ALARM)
+						else {
+							STATE = IDLE;
+						}
+					} else {
+						// Password failed/cancelled - re-flag emergency display update if needed
+						emergencyStateChange = 1;
 					}
 				}
 			}
@@ -542,6 +537,7 @@ int main(void)
 										// goes anticlockwise
 										FullStep(5);
 									}
+									isGateOpen = 0;
 								}
 								// only break while loop if password correct
 								// otherwise keep looping until timeout
