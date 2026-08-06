@@ -115,6 +115,12 @@ int openStateChange = 0;
 int occupancyCount = 0;   // Real-time occupant tracking
 int isExitMode = 0;       // 0 = Entering (NFC), 1 = Exiting (LDR2)
 
+// to clear LCD when emergency is called
+int emergencyStateChange = 0;
+int emergencyBlinkCounter = 0;
+int emergencyBlinkState = 0;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -133,6 +139,7 @@ bool checkPassword ();
 void shift_register_write(uint16_t data);
 void clearPeripherals();
 void sound_beep(uint16_t freq_hz, uint16_t duration_ms);
+void Buzzer_Tone(uint32_t frequency_hz);
 
 /* USER CODE END PFP */
 
