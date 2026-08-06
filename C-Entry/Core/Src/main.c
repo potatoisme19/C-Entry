@@ -108,6 +108,9 @@ int alarmFirstStart = 0;
 int alarmLedState = 0;
 int alarmCounter = 0;
 
+// for open state
+int openStateChange = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -251,12 +254,18 @@ int main(void)
 			  STATE = EVENT;
 			}
 
+			// set openStateChange = 1;
+
 		}
 
 		if (STATE == OPEN) {
-			clearPeripherals();
-			LCD_SendStr("WELCOME!");
-			shift_register_write(0xFFFF);
+			if (openStateChange == 1) {
+				clearPeripherals();
+				LCD_SendStr("WELCOME!");
+				shift_register_write(0xFFFF);
+				// rotate 90 degrees
+				stepper_rotate_steps(512, 5);
+			}
 
 			// detect tailgating
 			// start ADC, LDR 2
