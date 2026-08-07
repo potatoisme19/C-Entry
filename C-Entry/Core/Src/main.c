@@ -234,46 +234,6 @@ int main(void)
 		sprintf(stateMsg, "STATE: %d\r\n", STATE);
 		UART_Print(stateMsg);
 
-		// check if NFC reader works
-		//	  uidLen = PN532_ReadPassiveTarget(uid);
-		//	  if (uidLen > 0) {
-		//		  UART_PrintUID(uid, uidLen);
-		//	  }
-		//	  HAL_Delay(1);
-		//	  char m[100];
-		//	  snprintf(m, sizeof(m), "Milliseconds since program start: %d\r\n", milliseconds);
-		//	  UART_Print(m);
-
-//		if (STATE == IDLE) {
-//			// clear all peripherals
-//			clearPeripherals();
-//
-//			// get uid
-//			uidLen = PN532_ReadPassiveTarget(uid);
-//
-//			// check if success
-//			if (uidLen > 0) {
-//			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
-//			  // from IDLE to KEYPAD_STATE
-//			  if (RFID_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
-//				  if (checkPassword()) {
-//					  // reset eventStartTime
-//					  eventStartTime = 0;
-//					  STATE = KEYPAD;
-//					  keypadSchedulePrint = 1;
-//					  keypadStartTimeout = milliseconds;
-//				  }
-//			  }
-//			}
-//
-//			// turns to event after scheduled time
-//			// if eventStartTime == 0 then its not initialised
-//			if (milliseconds >= eventStartTime && eventStartTime != 0 && STATE != EMERGENCY) {
-//			  STATE = EVENT;
-//			}
-//
-//		}
-
 		if (STATE == IDLE) {
 			if (idleStart == 1) {
 				// clear all peripherals
@@ -705,17 +665,6 @@ int main(void)
 				
 			shift_register_write(0xAAAA);
 			HAL_Delay(1);
-
-//			if (eventFirstStart == 1) {
-//				// open all doors
-//				// rotate by 90 degrees (512 full steps)
-//				// goes clockwise
-//				if (!isGateOpen) {
-//					stepper_rotate_steps(512, 5);
-//					isGateOpen = 1;
-//				}
-//				eventFirstStart = 0;
-//			}
 
 			if (HAL_GPIO_ReadPin(SW4_GPIO_Port, SW4_Pin) == 1) {
 				LCD_SendCmd(LCD_CLEAR_DISPLAY);
