@@ -115,12 +115,13 @@ int alarmCounter = 0;
 int emergencyStateChange = 0;
 int emergencyBlinkCounter = 0;
 int emergencyBlinkState = 0;
+int RFIDAccessGranted = 0;
+int sw1TimeoutStart = 0;
 
 // for open state
 int openStateChange = 0;
 int openTimerStart = 0;
 int leaving = 0;
-int tailgateTimerCheck = 0;
 int ldr2WasTriggered = 0;
 int ldr2TriggerStart = 0;
 
@@ -276,6 +277,9 @@ int main(void)
 						STATE = KEYPAD;
 						keypadSchedulePrint = 1;
 						keypadStartTimeout = milliseconds;
+					} else {
+						LCD_SendCmd(LCD_CLEAR_DISPLAY);
+						LCD_SendStr("IDLE");
 					}
 				} else if (NFC_UID == scannedUID && uidLen > 0
 							&& STATE != EMERGENCY) {
@@ -373,7 +377,6 @@ int main(void)
 				}
 				isGateOpen = 1;
 				openTimerStart = milliseconds;
-				tailgateTimerCheck = milliseconds;
 				openStateChange = 0;
 			}
 
@@ -524,10 +527,38 @@ int main(void)
 		}
 
 		if (STATE == EMERGENCY) {
-			if (emergencyStateChange) {
+			// check rfid access first
+			if (emergencyStateChange && !RFIDAccessGranted) {
+				if (milliseconds - sw1TimeoutStart > 1000 * 60) {
+					STATE = previousState;
+				}
 				clearPeripherals();
-				LCD_SendCmd(LCD_CLEAR_DISPLAY);
-				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				LCD_SendStr("SCAN RFID");
+				// get uid
+				uidLen = PN532_ReadPassiveTarget(uid);
+
+				// check if success
+				if (uidLen > 0) {
+					uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
+							| (uid[2] << 8) | uid[3];
+
+					if (RFID_UID == scannedUID && uidLen > 0) {
+						if (checkPassword()) {
+							RFIDAccessGranted = 1;
+							clearPeripherals();
+							LCD_SendStr("!! EMERGENCY!!");
+							emergencyStateChange = 0;
+							// if it changed to emergency in the middle of keypad input
+							// clear temporary keypad buffer
+							for (int i = 0; i < timeDigitNum; i++) {
+								timeRecorded[i] = '\0';
+							}
+							timeDigitNum = 0;
+						}
+					}
+				}
+			} else if (emergencyStateChange && RFIDAccessGranted) {
+				clearPeripherals();
 				LCD_SendStr("!! EMERGENCY!!");
 				emergencyStateChange = 0;
 				// if it changed to emergency in the middle of keypad input
@@ -538,63 +569,46 @@ int main(void)
 				timeDigitNum = 0;
 			}
 
-			// open gate
-			if (!isGateOpen) {
-				stepper_rotate_steps(512, 3);
-				isGateOpen = 1;
-			}
-
-			// beep and blinking shift register 0.25s
-			if (milliseconds - emergencyBlinkCounter > 250) {
-				emergencyBlinkState = !emergencyBlinkState;
-				emergencyBlinkCounter = milliseconds;
-
-				if (emergencyBlinkState) {
-					shift_register_write(0xFFFF);
-					Buzzer_Tone(1000); // Beep at 1000 Hz
-				} else {
-					shift_register_write(0x0000);
-					Buzzer_Tone(0);      // Turn off PWM
+			if (RFIDAccessGranted) {
+				// open gate
+				if (!isGateOpen) {
+					stepper_rotate_steps(512, 3);
+					isGateOpen = 1;
 				}
-			}
 
-			// get uid
-			uidLen = PN532_ReadPassiveTarget(uid);
+				// beep and blinking shift register 0.25s
+				if (milliseconds - emergencyBlinkCounter > 250) {
+					emergencyBlinkState = !emergencyBlinkState;
+					emergencyBlinkCounter = milliseconds;
 
-			// check if success
-			if (uidLen > 0) {
-				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
-						| (uid[2] << 8) | uid[3];
-				// from EMERGENCY to IDLE
-				if (RFID_UID == scannedUID && uidLen > 0) {
-					// turn off beep and shift register
-					Buzzer_Tone(0);
-					shift_register_write(0x0000);
+					if (emergencyBlinkState) {
+						shift_register_write(0xFFFF);
+						Buzzer_Tone(1000); // Beep at 1000 Hz
+					} else {
+						shift_register_write(0x0000);
+						Buzzer_Tone(0);      // Turn off PWM
+					}
+				}
 
-					if (checkPassword()) {
-						// Password correct: Turn off alarm outputs
-						HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+				// get uid
+				uidLen = PN532_ReadPassiveTarget(uid);
 
-						// Case 1: Returning to IDLE or KEYPAD
-						if (previousState == IDLE || previousState == KEYPAD) {
-							if (isGateOpen) {
-								for (int i = 0; i < 128; i++) {
-									FullStep(5);
-								}
-								isGateOpen = 0;
-							}
-							STATE = IDLE;
-							idleStart = 1;
-						}
-						// Case 2: Returning to EVENT
-						else if (previousState == EVENT) {
-							// Check if event has not expired yet
-							if ((milliseconds - eventStartTime) < eventTime) {
-								STATE = EVENT;
-								eventFirstStart = 1; // Redraw LCD event screen
-								// Gate stays open! (isGateOpen remains 1)
-							} else {
-								// Event expired while in emergency
+				// check if success
+				if (uidLen > 0) {
+					uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
+							| (uid[2] << 8) | uid[3];
+					// from EMERGENCY to IDLE
+					if (RFID_UID == scannedUID && uidLen > 0) {
+						// turn off beep and shift register
+						Buzzer_Tone(0);
+						shift_register_write(0x0000);
+
+						if (checkPassword()) {
+							// Password correct: Turn off alarm outputs
+							HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
+
+							// Case 1: Returning to IDLE or KEYPAD
+							if (previousState == IDLE || previousState == KEYPAD) {
 								if (isGateOpen) {
 									for (int i = 0; i < 128; i++) {
 										FullStep(5);
@@ -604,15 +618,34 @@ int main(void)
 								STATE = IDLE;
 								idleStart = 1;
 							}
+							// Case 2: Returning to EVENT
+							else if (previousState == EVENT) {
+								// Check if event has not expired yet
+								if ((milliseconds - eventStartTime) < eventTime) {
+									STATE = EVENT;
+									eventFirstStart = 1; // Redraw LCD event screen
+									// Gate stays open! (isGateOpen remains 1)
+								} else {
+									// Event expired while in emergency
+									if (isGateOpen) {
+										for (int i = 0; i < 128; i++) {
+											FullStep(5);
+										}
+										isGateOpen = 0;
+									}
+									STATE = IDLE;
+									idleStart = 1;
+								}
+							}
+							// Fallback safety (e.g. if previous state was ALARM)
+							else {
+								STATE = IDLE;
+								idleStart = 1;
+							}
+						} else {
+							// Password failed/cancelled - re-flag emergency display update if needed
+							emergencyStateChange = 1;
 						}
-						// Fallback safety (e.g. if previous state was ALARM)
-						else {
-							STATE = IDLE;
-							idleStart = 1;
-						}
-					} else {
-						// Password failed/cancelled - re-flag emergency display update if needed
-						emergencyStateChange = 1;
 					}
 				}
 			}
@@ -1345,6 +1378,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 		}
 		emergencyStateChange = 1;
 		STATE = EMERGENCY;
+		RFIDAccessGranted = 0;
+		sw1TimeoutStart = milliseconds;
 	}
 }
 
