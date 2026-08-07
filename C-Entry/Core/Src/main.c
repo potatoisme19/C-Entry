@@ -116,6 +116,18 @@ int emergencyStateChange = 0;
 int emergencyBlinkCounter = 0;
 int emergencyBlinkState = 0;
 
+// for open state
+int openStateChange = 0;
+int openTimerStart = 0;
+int leaving = 0;
+int tailgateTimerCheck = 0;
+int ldr2WasTriggered = 0;
+int ldr2TriggerStart = 0;
+
+// for idle
+int idleTimerStart = 0;
+int idleStart = 1;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -222,48 +234,193 @@ int main(void)
 		sprintf(stateMsg, "STATE: %d\r\n", STATE);
 		UART_Print(stateMsg);
 
-		// check if NFC reader works
-		//	  uidLen = PN532_ReadPassiveTarget(uid);
-		//	  if (uidLen > 0) {
-		//		  UART_PrintUID(uid, uidLen);
-		//	  }
-		//	  HAL_Delay(1);
-		//	  char m[100];
-		//	  snprintf(m, sizeof(m), "Milliseconds since program start: %d\r\n", milliseconds);
-		//	  UART_Print(m);
-
 		if (STATE == IDLE) {
-			// clear all peripherals
-			clearPeripherals();
+			if (idleStart == 1) {
+				// clear all peripherals
+				clearPeripherals();
+				LCD_SendStr("IDLE");
+				idleStart = 0;
+				idleTimerStart = milliseconds;
+				// if gate open, close it
+				if (isGateOpen && leaving == 0) {
+					for (int i = 0; i < 128; i++) {
+						FullStep(5);
+					}
+					isGateOpen = 0;
+				}
+
+				if (isGateOpen && leaving == 1) {
+					for(int i = 0; i < 128; i++) {
+						FullStepReverse(5);
+					}
+					isGateOpen = 0;
+				}
+			}
 
 			// get uid
 			uidLen = PN532_ReadPassiveTarget(uid);
 
 			// check if success
 			if (uidLen > 0) {
-			  uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16) | (uid[2] << 8) | uid[3];
-			  // from IDLE to KEYPAD_STATE
-			  if (RFID_UID == scannedUID && uidLen > 0 && STATE != EMERGENCY) {
-				  if (checkPassword()) {
-					  // reset eventStartTime
-					  eventStartTime = 0;
-					  STATE = KEYPAD;
-					  keypadSchedulePrint = 1;
-					  keypadStartTimeout = milliseconds;
-				  }
-			  }
+				uint32_t scannedUID = (uid[0] << 24) | (uid[1] << 16)
+						| (uid[2] << 8) | uid[3];
+
+				// from IDLE to KEYPAD_STATE
+				if (RFID_UID == scannedUID && uidLen > 0
+						&& STATE != EMERGENCY) {
+					// move to second line before checking password
+					LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_SECOND_LINE);
+					if (checkPassword()) {
+						// reset eventStartTime
+						eventStartTime = 0;
+						STATE = KEYPAD;
+						keypadSchedulePrint = 1;
+						keypadStartTimeout = milliseconds;
+					}
+				} else if (NFC_UID == scannedUID && uidLen > 0
+							&& STATE != EMERGENCY) {
+						// play correct buzzer tone
+						int rest = 0;
+						int tune1[] = { 622, rest, 932, 784, 784, 698, 622, rest,
+								932, 784, 784, 698, 740, 784, rest, 932, 784, 784,
+								698, 622, 523, 622, 698, 932, 523, 622, 698, 622 };
+						int i = 0;
+						int lastNoteTime = 0;
+						int numNotes = sizeof(tune1) / sizeof(tune1[0]);
+						while (i < numNotes) {
+						    if (STATE == EMERGENCY) {
+						        break;
+						    }
+						    if (milliseconds - lastNoteTime >= 25) {
+						        Buzzer_Tone(tune1[i]);
+						        lastNoteTime = milliseconds;
+						        i++;
+						    }
+						}
+						// change state to OPEN
+						STATE = OPEN;
+						openStateChange = 1;
+						leaving = 0;
+				} else {
+					// play incorrect buzzer tone
+					int tune1[] = {440, 550, 440, 550, 440, 550, 440, 550, 440,
+								550, 400, 300, 255, 255, 300, 303};
+
+					int i = 0;
+					int lastNoteTime = 0;
+					int numNotes = sizeof(tune1) / sizeof(tune1[0]);
+					while (i < numNotes) {
+						if (STATE == EMERGENCY) {
+							break;
+						}
+
+						// only play and increment if time between is 25 milliseconds
+						if (milliseconds - lastNoteTime >= 25) {
+							Buzzer_Tone(tune1[i]);
+							lastNoteTime = milliseconds;
+							i++;
+						}
+					}
+					Buzzer_Tone(0);
+				}
+
+			}
+
+			// detect if someone is leaving the building
+			HAL_ADC_Start(&hadc3);
+			// wait until finished converting
+			HAL_ADC_PollForConversion(&hadc3, 100);
+			int val = HAL_ADC_GetValue(&hadc3);
+			// debounce, 500 is the threshold
+			if (val > 500) {
+				idleTimerStart = milliseconds;
+			} else {
+				// check for 500 milliseconds
+				// person needs to wait half a second for gate to start opening
+				if (milliseconds - idleTimerStart > 50) {
+					// exiting detected
+					STATE = OPEN;
+					openStateChange = 1;
+					leaving = 1;
+				}
+
 			}
 
 			// turns to event after scheduled time
 			// if eventStartTime == 0 then its not initialised
-			if (milliseconds >= eventStartTime && eventStartTime != 0 && STATE != EMERGENCY) {
-			  STATE = EVENT;
+			if (milliseconds >= eventStartTime && eventStartTime != 0
+					&& STATE != EMERGENCY && STATE != OPEN) {
+				STATE = EVENT;
+				eventFirstStart = 1;
 			}
 
 		}
 
 		if (STATE == OPEN) {
-			// assign alarmFirstStart = 1, when tailgate detected
+			if (openStateChange == 1) {
+				clearPeripherals();
+				shift_register_write(0xFFFF);
+
+				if (leaving) {
+					LCD_SendStr("GOODBYE!");
+					// rotate 90 degrees
+					for (int i = 0; i < 128; i++) {
+						FullStep(5);
+					}
+				} else {
+					LCD_SendStr("WELCOME!");
+					stepper_rotate_steps(512, 5);
+				}
+				isGateOpen = 1;
+				openTimerStart = milliseconds;
+				tailgateTimerCheck = milliseconds;
+				openStateChange = 0;
+			}
+
+			// 10 second timeout if no one enters the gate
+			if (milliseconds - openTimerStart > 1000 * 10) {
+				STATE = IDLE;
+				idleStart = 1;
+			}
+
+			if (leaving) {
+				// LDR1 detected, close early
+				HAL_ADC_Start(&hadc2); // start LDR1
+				HAL_ADC_PollForConversion(&hadc2, 100);
+				int val = HAL_ADC_GetValue(&hadc2);
+				if (val < 500) {
+					STATE = IDLE;
+					idleStart = 1;
+				}
+			} else {
+				// detect tailgating
+				// start ADC, LDR 2
+				HAL_ADC_Start(&hadc3);
+				// wait until finished converting
+				HAL_ADC_PollForConversion(&hadc3, 100);
+				int val = HAL_ADC_GetValue(&hadc3);
+				// set adc threshold to be 500
+		        if (val < 500) {
+		        	// user passes ldr2
+		            if (!ldr2WasTriggered) {
+		                ldr2WasTriggered = 1;
+		                ldr2TriggerStart = milliseconds;
+		            } else if (milliseconds - ldr2TriggerStart > 2000) {
+		                // if still blocked after 2 seconds, trigger alarm
+		                STATE = ALARM;
+		                alarmFirstStart = 1;
+		            }
+		        } else {
+		            if (ldr2WasTriggered) {
+		                // close gate early, ldr 2 not triggered for 2 seconds
+		                STATE = IDLE;
+		                idleStart = 1;
+		            }
+		            ldr2WasTriggered = 0;
+		        }
+
+			}
+
 		}
 
 		if (STATE == ALARM) {
@@ -298,7 +455,7 @@ int main(void)
 				// then starts to close gate
 				// motor rotates 90 degrees
 				for (int i = 0;i < 128; i++) {
-					FullStepReverse(5);
+					FullStep(5);
 				}
 				isGateOpen = 0;
 				alarmFirstStart = 0;
@@ -306,6 +463,11 @@ int main(void)
 
 			// to exit ALARM state
 			if (HAL_GPIO_ReadPin(SW4_GPIO_Port, SW4_Pin) == 1) {
+				LCD_SendCmd(LCD_CLEAR_DISPLAY);
+				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+				char exitStr[17];
+				snprintf(exitStr, sizeof(exitStr), "EXITING");
+				LCD_SendStr(exitStr);
 				HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
 				int timeout = 1000 * 60; // 1 minute timeout
 				// scans for RFID
@@ -321,8 +483,17 @@ int main(void)
 						if (RFID_UID == scannedUID && uidLen > 0) {
 							if (checkPassword()) {
 								STATE = IDLE;
+								idleStart = 1;
+								isGateOpen = 0;
 								HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_3);
 								break;
+							} else {
+								// reprint
+								LCD_SendCmd(LCD_CLEAR_DISPLAY);
+								LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
+								char exitStr[17];
+								snprintf(exitStr, sizeof(exitStr), "EXITING");
+								LCD_SendStr(exitStr);
 							}
 						}
 					}
@@ -413,6 +584,7 @@ int main(void)
 								isGateOpen = 0;
 							}
 							STATE = IDLE;
+							idleStart = 1;
 						}
 						// Case 2: Returning to EVENT
 						else if (previousState == EVENT) {
@@ -430,11 +602,13 @@ int main(void)
 									isGateOpen = 0;
 								}
 								STATE = IDLE;
+								idleStart = 1;
 							}
 						}
 						// Fallback safety (e.g. if previous state was ALARM)
 						else {
 							STATE = IDLE;
+							idleStart = 1;
 						}
 					} else {
 						// Password failed/cancelled - re-flag emergency display update if needed
@@ -492,17 +666,6 @@ int main(void)
 			shift_register_write(0xAAAA);
 			HAL_Delay(1);
 
-//			if (eventFirstStart == 1) {
-//				// open all doors
-//				// rotate by 90 degrees (512 full steps)
-//				// goes clockwise
-//				if (!isGateOpen) {
-//					stepper_rotate_steps(512, 5);
-//					isGateOpen = 1;
-//				}
-//				eventFirstStart = 0;
-//			}
-
 			if (HAL_GPIO_ReadPin(SW4_GPIO_Port, SW4_Pin) == 1) {
 				LCD_SendCmd(LCD_CLEAR_DISPLAY);
 				LCD_SendCmd(SET_DDRAM_ADDRESS | LCD_FIRST_LINE);
@@ -524,6 +687,7 @@ int main(void)
 						if (RFID_UID == scannedUID && uidLen > 0) {
 							if (checkPassword()) {
 								STATE = IDLE;
+								idleStart = 1;
 								eventTime = 0;
 								eventStartTime = 0;
 								if (isGateOpen) {
@@ -545,6 +709,7 @@ int main(void)
 			// check event time, goes to IDLE state if event time is more than assigned time
 			if ((milliseconds - eventStartTime) > eventTime && STATE != EMERGENCY) {
 				STATE = IDLE;
+				idleStart = 1;
 				eventTime = 0;
 				eventStartTime = 0;
 			}
@@ -595,27 +760,43 @@ int main(void)
 
 				} else if (c == '#') {
 					// enter
-					eventFirstStart = 1;
-					// time recorded is in minutes
-					// e.g inputted 1 is 1 minute
-					// minutes
-					eventTime  = atoi(timeRecorded) * 1000 * 60;
-					// seconds for testing
-					// eventTime = atoi(timeRecorded) * 1000;
-					// reset time recorded
-					for (int i = 0; i < timeDigitNum; i++) {
-						timeRecorded[i] = '\0';
-					}
-					timeDigitNum = 0;
-					// clear lcd after enter
-					LCD_SendCmd(LCD_CLEAR_DISPLAY);
-					if (scheduledMinutes == 0) {
-						// if theres no scheduled time we start instantly
-						STATE = EVENT;
-						eventStartTime = milliseconds;
-					} else {
+					if (timeDigitNum == 0) {
 						STATE = IDLE;
-						eventStartTime = milliseconds + (scheduledMinutes * 1000 * 60);
+						idleStart = 1;
+					} else {
+						eventFirstStart = 1;
+						// time recorded is in minutes
+						// e.g inputted 1 is 1 minute
+						// minutes
+						if (atoi(timeRecorded) == 0) {
+							STATE = IDLE;
+							idleStart = 1;
+							for (int i = 0; i < timeDigitNum; i++) {
+								timeRecorded[i] = '\0';
+							}
+							timeDigitNum = 0;
+						} else {
+							eventTime  = atoi(timeRecorded) * 1000 * 60;
+							// seconds for testing
+							// eventTime = atoi(timeRecorded) * 1000;
+							// reset time recorded
+							for (int i = 0; i < timeDigitNum; i++) {
+								timeRecorded[i] = '\0';
+							}
+							timeDigitNum = 0;
+							// clear lcd after enter
+							LCD_SendCmd(LCD_CLEAR_DISPLAY);
+							if (scheduledMinutes == 0) {
+								// if theres no scheduled time we start instantly
+								STATE = EVENT;
+								eventFirstStart = 1;
+								eventStartTime = milliseconds;
+							} else {
+								STATE = IDLE;
+								idleStart = 1;
+								eventStartTime = milliseconds + (scheduledMinutes * 1000 * 60);
+							}
+						}
 					}
 				} else if (c == 'A') {
 					// move event start time forward/backward by one hour
@@ -645,6 +826,7 @@ int main(void)
 			// goes back to IDLE state if timeout
 			if (isTimeout > KEYPAD_TIMEOUT) {
 				STATE = IDLE;
+				idleStart = 1;
 			}
 
 		}
